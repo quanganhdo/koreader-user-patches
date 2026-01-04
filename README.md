@@ -4,9 +4,10 @@ Some of my personal user patches to add extra bells and whistles to your KOReade
 
 ## Installation
 
-1. Create a `patches` directory inside your KOReader folder on the device (if not exists).
-2. Copy any `.lua` patch from this repo into `patches/`. They can be used individually or together.
-3. Restart KOReader and make sure the patches are enabled in `Patch Management`.
+1. Make sure you have the `Reading statistics` plugin enabled in `Plugin management`.
+2. Create a `patches` directory inside your KOReader folder on the device (if not exists).
+3. Copy any `.lua` patch from this repo into `patches/`. They can be used individually or together.
+4. Restart KOReader and make sure the patches are enabled in `Patch management`.
 
 ## Patches
 

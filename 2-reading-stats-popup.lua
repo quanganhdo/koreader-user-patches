@@ -2,6 +2,8 @@
 Reading Stats Popup - Kobo-style reading statistics overlay
 Shows: This Chapter (time left), Next Chapter (time), This Book (progress, pages read, time spent/left),
        Pace (avg time/day, pages/minute), Days (reading/to go)
+Version: 1.0.1
+Updates: https://github.com/quanganhdo/koreader-user-patches
 ]]--
 
 local Blitbuffer = require("ffi/blitbuffer")
@@ -29,8 +31,99 @@ local util = require("util")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local Screen = Device.screen
-local _ = require("gettext")
-local N_ = _.ngettext
+local gettext = require("gettext")
+
+-- User patch localization: add your language overrides here.
+local PATCH_L10N = {
+    en = {
+        ["THIS CHAPTER"] = "THIS CHAPTER",
+        ["NEXT CHAPTER"] = "NEXT CHAPTER",
+        ["THIS BOOK"] = "THIS BOOK",
+        ["PACE"] = "PACE",
+        ["Reading statistics: overview"] = "Reading statistics: overview",
+        ["to go"] = "to go",
+        ["to read"] = "to read",
+        ["read"] = "read",
+        ["per day"] = "per day",
+        ["minute"] = "minute",
+        ["minutes"] = "minutes",
+        ["hour"] = "hour",
+        ["hours"] = "hours",
+        ["week reading"] = "week reading",
+        ["weeks reading"] = "weeks reading",
+        ["month reading"] = "month reading",
+        ["months reading"] = "months reading",
+        ["day reading"] = "day reading",
+        ["days reading"] = "days reading",
+        ["week to go"] = "week to go",
+        ["weeks to go"] = "weeks to go",
+        ["month to go"] = "month to go",
+        ["months to go"] = "months to go",
+        ["day to go"] = "day to go",
+        ["days to go"] = "days to go",
+        ["page read"] = "page read",
+        ["pages read"] = "pages read",
+        ["page per minute"] = "page per minute",
+        ["pages per minute"] = "pages per minute",
+    },
+    vi = {
+        ["THIS CHAPTER"] = "CHƯƠNG NÀY",
+        ["NEXT CHAPTER"] = "CHƯƠNG TIẾP",
+        ["THIS BOOK"] = "SÁCH NÀY",
+        ["PACE"] = "NHỊP ĐỌC",
+        ["Reading statistics: overview"] = "Thống kê đọc: tổng quan",
+        ["to go"] = "sẽ xong",
+        ["to read"] = "để đọc",
+        ["read"] = "đã đọc",
+        ["per day"] = "mỗi ngày",
+        ["minute"] = "phút",
+        ["minutes"] = "phút",
+        ["hour"] = "giờ",
+        ["hours"] = "giờ",
+        ["week reading"] = "tuần đã đọc",
+        ["weeks reading"] = "tuần đã đọc",
+        ["month reading"] = "tháng đã đọc",
+        ["months reading"] = "tháng đã đọc",
+        ["day reading"] = "ngày đã đọc",
+        ["days reading"] = "ngày đã đọc",
+        ["week to go"] = "tuần sẽ xong",
+        ["weeks to go"] = "tuần sẽ xong",
+        ["month to go"] = "tháng sẽ xong",
+        ["months to go"] = "tháng sẽ xong",
+        ["day to go"] = "ngày sẽ xong",
+        ["days to go"] = "ngày sẽ xong",
+        ["page read"] = "trang đã đọc",
+        ["pages read"] = "trang đã đọc",
+        ["page per minute"] = "trang mỗi phút",
+        ["pages per minute"] = "trang mỗi phút",
+    },
+}
+
+local function l10nLookup(msg)
+    local lang = "en"
+    if G_reader_settings and G_reader_settings.readSetting then
+        lang = G_reader_settings:readSetting("language") or "en"
+    end
+    local lang_base = lang:match("^([a-z]+)") or lang
+    local map = PATCH_L10N[lang] or PATCH_L10N[lang_base] or PATCH_L10N.en or {}
+    return map[msg]
+end
+
+local function _(msg)
+    return l10nLookup(msg) or gettext(msg)
+end
+
+local function N_(singular, plural, n)
+    local singular_override = l10nLookup(singular)
+    local plural_override = l10nLookup(plural)
+    if singular_override or plural_override then
+        if n == 1 then
+            return singular_override or plural_override
+        end
+        return plural_override or singular_override
+    end
+    return gettext.ngettext(singular, plural, n)
+end
 
 local stats_db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
 
@@ -48,24 +141,28 @@ local function formatFraction(numerator, denominator)
 end
 
 -- Returns { value = "...", unit = "..." } for display.
+-- Uses the same minute-rounding behavior as the stock footer.
 local function formatTimeHuman(seconds)
-    if not seconds or seconds <= 0 then
+    if not seconds or seconds ~= seconds then
         return emptyValue()
     end
 
-    if seconds < 60 then
-        local s = math.floor(seconds)
-        return { value = formatCount(s), unit = N_("second", "seconds", s) }
-    elseif seconds < 3600 then
-        local m = math.floor(seconds / 60)
-        return { value = formatCount(m), unit = N_("minute", "minutes", m) }
+    if seconds <= 0 then
+        return { value = formatCount(0), unit = N_("minute", "minutes", 0) }
+    end
+
+    local rounded_minutes = Math.round(seconds / 60)
+    if rounded_minutes <= 0 then
+        return { value = formatCount(0), unit = N_("minute", "minutes", 0) }
+    elseif rounded_minutes < 60 then
+        return { value = formatCount(rounded_minutes), unit = N_("minute", "minutes", rounded_minutes) }
+    end
+
+    local h = rounded_minutes / 60
+    if h < 10 then
+        return { value = string.format("%.1f", h), unit = N_("hour", "hours", h) }
     else
-        local h = seconds / 3600
-        if h < 10 then
-            return { value = string.format("%.1f", h), unit = N_("hour", "hours", h) }
-        else
-            return { value = string.format("%.0f", h), unit = N_("hour", "hours", h) }
-        end
+        return { value = string.format("%.0f", h), unit = N_("hour", "hours", h) }
     end
 end
 
@@ -500,6 +597,11 @@ function ReadingStatsPopup:gatherStats()
                 next_chapter_pages = chapter_after_next - next_chapter_start
             else
                 next_chapter_pages = pages - next_chapter_start + 1
+            end
+            -- Mirror footer semantics by excluding the chapter start page.
+            next_chapter_pages = next_chapter_pages - 1
+            if next_chapter_pages < 0 then
+                next_chapter_pages = 0
             end
             if next_chapter_pages and next_chapter_pages > 0 then
                 local seconds = next_chapter_pages * avg_time

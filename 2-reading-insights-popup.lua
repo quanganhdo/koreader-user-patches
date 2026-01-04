@@ -1,6 +1,8 @@
 --[[
 Reading Insights Popup - Reading stats and streaks overlay
 Shows: Today (time/pages), Current/Best streaks, Year totals, Monthly chart, books list on tap
+Version: 1.0.1
+Updates: https://github.com/quanganhdo/koreader-user-patches
 ]]--
 
 local Blitbuffer = require("ffi/blitbuffer")
@@ -28,10 +30,149 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local Widget = require("ui/widget/widget")
 local Screen = Device.screen
-local _ = require("gettext")
-local N_ = _.ngettext
+local gettext = require("gettext")
 local T = require("ffi/util").template
 local util = require("util")
+
+-- User patch localization: add your language overrides here.
+local PATCH_L10N = {
+    en = {
+        ["Jan"] = "Jan",
+        ["Feb"] = "Feb",
+        ["Mar"] = "Mar",
+        ["Apr"] = "Apr",
+        ["May"] = "May",
+        ["Jun"] = "Jun",
+        ["Jul"] = "Jul",
+        ["Aug"] = "Aug",
+        ["Sep"] = "Sep",
+        ["Oct"] = "Oct",
+        ["Nov"] = "Nov",
+        ["Dec"] = "Dec",
+        ["January"] = "January",
+        ["February"] = "February",
+        ["March"] = "March",
+        ["April"] = "April",
+        ["May"] = "May",
+        ["June"] = "June",
+        ["July"] = "July",
+        ["August"] = "August",
+        ["September"] = "September",
+        ["October"] = "October",
+        ["November"] = "November",
+        ["December"] = "December",
+        ["second read"] = "second read",
+        ["seconds read"] = "seconds read",
+        ["minute read"] = "minute read",
+        ["minutes read"] = "minutes read",
+        ["hour read"] = "hour read",
+        ["hours read"] = "hours read",
+        ["day read"] = "day read",
+        ["days read"] = "days read",
+        ["page read"] = "page read",
+        ["pages read"] = "pages read",
+        ["week in a row"] = "week in a row",
+        ["weeks in a row"] = "weeks in a row",
+        ["day in a row"] = "day in a row",
+        ["days in a row"] = "days in a row",
+        ["page"] = "page",
+        ["pages"] = "pages",
+        ["TODAY"] = "TODAY",
+        ["No weekly streak"] = "No weekly streak",
+        ["No daily streak"] = "No daily streak",
+        ["CURRENT STREAK"] = "CURRENT STREAK",
+        ["BEST STREAK"] = "BEST STREAK",
+        ["DAYS READ PER MONTH"] = "DAYS READ PER MONTH",
+        ["Reading statistics: reading insights"] = "Reading statistics: reading insights",
+        ["Unknown"] = "Unknown",
+        ["No books read"] = "No books read",
+        ["No books read in %1"] = "No books read in %1",
+        ["No books read in "] = "No books read in ",
+        ["%1 - Book Read (%2)"] = "%1 - Book Read (%2)",
+        ["%1 - Books Read (%2)"] = "%1 - Books Read (%2)",
+    },
+    vi = {
+        ["Jan"] = "Th1",
+        ["Feb"] = "Th2",
+        ["Mar"] = "Th3",
+        ["Apr"] = "Th4",
+        ["May"] = "Th5",
+        ["Jun"] = "Th6",
+        ["Jul"] = "Th7",
+        ["Aug"] = "Th8",
+        ["Sep"] = "Th9",
+        ["Oct"] = "Th10",
+        ["Nov"] = "Th11",
+        ["Dec"] = "Th12",
+        ["January"] = "Tháng 1",
+        ["February"] = "Tháng 2",
+        ["March"] = "Tháng 3",
+        ["April"] = "Tháng 4",
+        ["May"] = "Tháng 5",
+        ["June"] = "Tháng 6",
+        ["July"] = "Tháng 7",
+        ["August"] = "Tháng 8",
+        ["September"] = "Tháng 9",
+        ["October"] = "Tháng 10",
+        ["November"] = "Tháng 11",
+        ["December"] = "Tháng 12",
+        ["second read"] = "giây đã đọc",
+        ["seconds read"] = "giây đã đọc",
+        ["minute read"] = "phút đã đọc",
+        ["minutes read"] = "phút đã đọc",
+        ["hour read"] = "giờ đã đọc",
+        ["hours read"] = "giờ đã đọc",
+        ["day read"] = "ngày đã đọc",
+        ["days read"] = "ngày đã đọc",
+        ["page read"] = "trang đã đọc",
+        ["pages read"] = "trang đã đọc",
+        ["week in a row"] = "tuần liên tiếp",
+        ["weeks in a row"] = "tuần liên tiếp",
+        ["day in a row"] = "ngày liên tiếp",
+        ["days in a row"] = "ngày liên tiếp",
+        ["page"] = "trang",
+        ["pages"] = "trang",
+        ["TODAY"] = "HÔM NAY",
+        ["No weekly streak"] = "Không có chuỗi tuần liên tiếp",
+        ["No daily streak"] = "Không có chuỗi ngày liên tiếp",
+        ["CURRENT STREAK"] = "CHUỖI LIÊN TIẾP HIỆN TẠI",
+        ["BEST STREAK"] = "CHUỖI LIÊN TIẾP DÀI NHẤT",
+        ["DAYS READ PER MONTH"] = "SỐ NGÀY ĐỌC MỖI THÁNG",
+        ["Reading statistics: reading insights"] = "Thống kê đọc: phân tích",
+        ["Unknown"] = "Không rõ",
+        ["No books read"] = "Chưa đọc sách nào",
+        ["No books read in %1"] = "Không đọc sách nào trong %1",
+        ["No books read in "] = "Không đọc sách nào trong ",
+        ["%1 - Book Read (%2)"] = "%1 - Sách đã đọc (%2)",
+        ["%1 - Books Read (%2)"] = "%1 - Sách đã đọc (%2)",
+    },
+}
+
+local function l10nLookup(msg)
+    local lang = "en"
+    if G_reader_settings and G_reader_settings.readSetting then
+        lang = G_reader_settings:readSetting("language") or "en"
+    end
+    local lang_base = lang:match("^([a-z]+)") or lang
+    local map = PATCH_L10N[lang] or PATCH_L10N[lang_base] or PATCH_L10N.en or {}
+    return map[msg]
+end
+
+local function _(msg)
+    return l10nLookup(msg) or gettext(msg)
+end
+
+local function N_(singular, plural, n)
+    local singular_override = l10nLookup(singular)
+    local plural_override = l10nLookup(plural)
+    if singular_override or plural_override then
+        if n == 1 then
+            return singular_override or plural_override
+        end
+        return plural_override or singular_override
+    end
+    return gettext.ngettext(singular, plural, n)
+end
 
 local function formatCount(value)
     if value == nil then return "" end

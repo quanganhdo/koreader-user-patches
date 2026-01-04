@@ -1,8 +1,6 @@
 --[[
 Reading Insights Popup - Reading stats and streaks overlay
 Shows: Today (time/pages), Current/Best streaks, Year totals, Monthly chart, books list on tap
-
-To use: Assign gesture via Settings → Gesture Manager → Reading Statistics → Reading Insights
 ]]--
 
 local Blitbuffer = require("ffi/blitbuffer")

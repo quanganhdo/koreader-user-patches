@@ -2,8 +2,6 @@
 Reading Stats Popup - Kobo-style reading statistics overlay
 Shows: This Chapter (time left), Next Chapter (time), This Book (progress, pages read, time spent/left),
        Pace (avg time/day, pages/minute), Days (reading/to go)
-
-To use: Assign gesture via Settings → Gesture Manager → Reading Statistics → Reading Stats Popup
 ]]--
 
 local Blitbuffer = require("ffi/blitbuffer")

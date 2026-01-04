@@ -28,7 +28,7 @@ Screenshot:
 ### `2-reading-insights-popup.lua`
 
 Reading Insights overlay with today stats (time/pages), streaks, yearly totals, a monthly chart, and a books list on tap.
-Assign a gesture via `Gesture Manager` to trigger `Reader > Reading statsitics: reading insights`.
+Assign a gesture via `Gesture Manager` to trigger `Reader > Reading statistics: reading insights`.
 
 Screenshot:
 <br>
@@ -39,7 +39,7 @@ Screenshot:
 ### `2-reading-stats-popup.lua`
 
 Kobo-style reading stats overlay: chapter time left, next chapter time, book progress, and reading pace.
-Assign a gesture via `Gesture Manager` to trigger `Reader > Reading statsitics: overview`.
+Assign a gesture via `Gesture Manager` to trigger `Reader > Reading statistics: overview`.
 
 Screenshot:
 <br>

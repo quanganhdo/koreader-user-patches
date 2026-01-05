@@ -2,7 +2,7 @@
 Reading Stats Popup - Kobo-style reading statistics overlay
 Shows: This Chapter (time left), Next Chapter (time), This Book (progress, pages read, time spent/left),
        Pace (avg time/day, pages/minute), Days (reading/to go)
-Version: 1.0.1
+Version: 1.0.2
 Updates: https://github.com/quanganhdo/koreader-user-patches
 ]]--
 
@@ -125,6 +125,26 @@ local function N_(singular, plural, n)
     return gettext.ngettext(singular, plural, n)
 end
 
+local TIME_FORMAT_SETTING = "userpatch.anh.reading_stats_time_format"
+local TIME_FORMAT_NICKEL = "nickel"
+local TIME_FORMAT_XHYM = "xhym"
+
+local function getTimeFormatSetting()
+    if G_reader_settings and G_reader_settings.readSetting then
+        return G_reader_settings:readSetting(TIME_FORMAT_SETTING) or TIME_FORMAT_NICKEL
+    end
+    return TIME_FORMAT_NICKEL
+end
+
+local function setTimeFormatSetting(value)
+    if G_reader_settings and G_reader_settings.saveSetting then
+        G_reader_settings:saveSetting(TIME_FORMAT_SETTING, value)
+        if G_reader_settings.flush then
+            G_reader_settings:flush()
+        end
+    end
+end
+
 local stats_db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
 
 local function emptyValue()
@@ -164,6 +184,31 @@ local function formatTimeHuman(seconds)
     else
         return { value = string.format("%.0f", h), unit = N_("hour", "hours", h) }
     end
+end
+
+local function formatTimeXhym(seconds)
+    if not seconds or seconds ~= seconds then
+        return emptyValue()
+    end
+
+    local total_minutes = Math.round(seconds / 60)
+    if total_minutes <= 0 then
+        return { value = "0m", unit = "" }
+    end
+
+    local hours = math.floor(total_minutes / 60)
+    local minutes = total_minutes % 60
+    if hours > 0 then
+        return { value = string.format("%dh%02dm", hours, minutes), unit = "" }
+    end
+    return { value = string.format("%dm", minutes), unit = "" }
+end
+
+local function selectTimeFormatter()
+    if getTimeFormatSetting() == TIME_FORMAT_XHYM then
+        return formatTimeXhym
+    end
+    return formatTimeHuman
 end
 
 local function dayCountLabel(kind, unit, count)
@@ -386,15 +431,32 @@ local function padded(padding_h, widget)
     }
 end
 
-local function buildTwoColRow(left_widget, right_widget, layout)
+local function shouldTrackTarget(target_mask, key)
+    if not target_mask then
+        return true
+    end
+    return target_mask[key] == true
+end
+
+local function buildTwoColRow(left_widget, right_widget, layout, tap_targets, target_mask)
     local left_h = left_widget:getSize().h
     local right_h = right_widget:getSize().h
     local row_height = math.max(left_h, right_h)
+    local left_col = fixedCol(left_widget, layout.col_width, row_height)
+    local right_col = fixedCol(right_widget, layout.col_width, row_height)
+    if tap_targets then
+        if shouldTrackTarget(target_mask, "left") then
+            table.insert(tap_targets, left_col)
+        end
+        if shouldTrackTarget(target_mask, "right") then
+            table.insert(tap_targets, right_col)
+        end
+    end
     return HorizontalGroup:new{
         align = "center",
-        fixedCol(left_widget, layout.col_width, row_height),
+        left_col,
         buildColumnSeparator(layout.column_gap, row_height),
-        fixedCol(right_widget, layout.col_width, row_height),
+        right_col,
     }
 end
 
@@ -421,7 +483,7 @@ local function addSectionWithRow(sections, header_widget, row, layout)
     })
 end
 
-local function buildSections(stats, fonts, layout)
+local function buildSections(stats, fonts, layout, tap_targets)
     local function valueLine(time_data, label)
         return buildValueLine(fonts.value, fonts.label, layout.col_width, time_data, label)
     end
@@ -439,10 +501,10 @@ local function buildSections(stats, fonts, layout)
     local days_col2 = valueLine(stats.days_to_go, "")
 
     local book_progress_row = buildTwoColRow(book_progress, book_pages_read, layout)
-    local book_row = buildTwoColRow(book_col1, book_col2, layout)
-    local pace_row = buildTwoColRow(pace_col1, pace_col2, layout)
+    local book_row = buildTwoColRow(book_col1, book_col2, layout, tap_targets)
+    local pace_row = buildTwoColRow(pace_col1, pace_col2, layout, tap_targets, { left = true })
     local days_row = buildTwoColRow(days_col1, days_col2, layout)
-    local chapter_values = buildTwoColRow(chapter_val1, chapter_val2, layout)
+    local chapter_values = buildTwoColRow(chapter_val1, chapter_val2, layout, tap_targets)
     local chapter_headers = buildChapterHeaders(fonts.section, layout)
 
     local sections = VerticalGroup:new{
@@ -496,7 +558,8 @@ function ReadingStatsPopup:init()
     local stats = self:gatherStats()
     local fonts = buildSerifFonts()
     local layout = buildLayout(screen_w, Size.padding.large, Screen:scaleBySize(20))
-    local sections = buildSections(stats, fonts, layout)
+    local tap_targets = {}
+    local sections = buildSections(stats, fonts, layout, tap_targets)
 
     self.popup_frame = FrameContainer:new{
         background = Blitbuffer.COLOR_WHITE,
@@ -511,6 +574,7 @@ function ReadingStatsPopup:init()
         self.popup_frame,
     }
 
+    self.time_cell_targets = tap_targets
     self.dimen = Geom:new{ w = screen_w, h = screen_h }
 
     if Device:isTouchDevice() then
@@ -532,20 +596,21 @@ function ReadingStatsPopup:onShow()
 end
 
 function ReadingStatsPopup:gatherStats()
-    local zero_minutes = { value = formatCount(0), unit = N_("minute", "minutes", 0) }
+    local formatTime = selectTimeFormatter()
+    local zero_time = formatTime(0)
     local zero_pages_per_minute = { value = formatCount(0), unit = N_("page per minute", "pages per minute", 0) }
     local zero_days_reading = humanizeDayCount(0, "reading")
     local zero_days_to_go = humanizeDayCount(0, "to_go")
     local zero_progress = { value = formatCount(0) .. "%", unit = "" }
     local zero_pages_read = { value = formatCount(0), unit = N_("page read", "pages read", 0) }
     local stats = {
-        chapter_time_left = zero_minutes,
-        next_chapter_time = zero_minutes,
-        book_time_left = zero_minutes,
-        book_time_spent = zero_minutes,
+        chapter_time_left = zero_time,
+        next_chapter_time = zero_time,
+        book_time_left = zero_time,
+        book_time_spent = zero_time,
         book_progress = zero_progress,
         book_pages_read = zero_pages_read,
-        avg_time_per_day = zero_minutes,
+        avg_time_per_day = zero_time,
         pages_per_minute = zero_pages_per_minute,
         days_reading = zero_days_reading,
         days_to_go = zero_days_to_go,
@@ -586,7 +651,7 @@ function ReadingStatsPopup:gatherStats()
         local chapter_pages_left = getChapterPagesLeft(ui, pageno)
         if chapter_pages_left and chapter_pages_left > 0 then
             local seconds = chapter_pages_left * avg_time
-            stats.chapter_time_left = formatTimeHuman(seconds)
+            stats.chapter_time_left = formatTime(seconds)
         end
 
         local next_chapter_start = toc:getNextChapter(pageno)
@@ -605,7 +670,7 @@ function ReadingStatsPopup:gatherStats()
             end
             if next_chapter_pages and next_chapter_pages > 0 then
                 local seconds = next_chapter_pages * avg_time
-                stats.next_chapter_time = formatTimeHuman(seconds)
+                stats.next_chapter_time = formatTime(seconds)
             end
         else
             stats.next_chapter_time = emptyValue()
@@ -616,7 +681,7 @@ function ReadingStatsPopup:gatherStats()
         pages_left = getBookPagesLeft(ui)
         if pages_left and pages_left > 0 then
             local seconds = pages_left * avg_time
-            stats.book_time_left = formatTimeHuman(seconds)
+            stats.book_time_left = formatTime(seconds)
         end
     end
 
@@ -638,13 +703,13 @@ function ReadingStatsPopup:gatherStats()
             total_time = tonumber(time_val) or 0
         end
         if total_time and total_time > 0 then
-            stats.book_time_spent = formatTimeHuman(total_time)
+            stats.book_time_spent = formatTime(total_time)
         end
         local total_days = getTotalDaysForBook(plugin.id_curr_book)
         if total_days ~= nil then
             if total_time and total_time > 0 then
                 local avg_per_day = total_time / total_days
-                stats.avg_time_per_day = formatTimeHuman(avg_per_day)
+                stats.avg_time_per_day = formatTime(avg_per_day)
             end
 
             stats.days_reading = humanizeDayCount(total_days, "reading")
@@ -663,7 +728,23 @@ function ReadingStatsPopup:gatherStats()
     return stats
 end
 
-function ReadingStatsPopup:onTapClose()
+function ReadingStatsPopup:toggleTimeFormat()
+    local current = getTimeFormatSetting()
+    local next_format = current == TIME_FORMAT_XHYM and TIME_FORMAT_NICKEL or TIME_FORMAT_XHYM
+    setTimeFormatSetting(next_format)
+    UIManager:close(self)
+    UIManager:show(ReadingStatsPopup:new{ ui = self.ui })
+    return true
+end
+
+function ReadingStatsPopup:onTapClose(arg, ges_ev)
+    if ges_ev and ges_ev.pos and self.time_cell_targets then
+        for _, target in ipairs(self.time_cell_targets) do
+            if target.dimen and ges_ev.pos:intersectWith(target.dimen) then
+                return self:toggleTimeFormat()
+            end
+        end
+    end
     UIManager:close(self)
     return true
 end

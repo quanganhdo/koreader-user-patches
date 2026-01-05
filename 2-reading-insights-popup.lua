@@ -1,7 +1,7 @@
 --[[
 Reading Insights Popup - Reading stats and streaks overlay
 Shows: Today (time/pages), Current/Best streaks, Year totals, Monthly chart, books list on tap
-Version: 1.0.1
+Version: 1.0.2
 Updates: https://github.com/quanganhdo/koreader-user-patches
 ]]--
 

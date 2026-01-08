@@ -1,7 +1,11 @@
 --[[
 Reading Insights Popup - Reading stats and streaks overlay
 Shows: Today (time/pages), Current/Best streaks, Year totals, Monthly chart, books list on tap
-Version: 1.0.1
+Controls: Any key to dismiss; Prev/Next to navigate years
+Tap left yearly value to switch days/hours
+Tap right yearly value or monthly bars to open book list
+Tap monthly header to switch days/hours
+Version: 1.0.2
 Updates: https://github.com/quanganhdo/koreader-user-patches
 ]]--
 
@@ -12,6 +16,7 @@ local CenterContainer = require("ui/widget/container/centercontainer")
 local DataStorage = require("datastorage")
 local Device = require("device")
 local Dispatcher = require("dispatcher")
+local FileManager = require("apps/filemanager/filemanager")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -21,6 +26,7 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
+local ReaderUI = require("apps/reader/readerui")
 local Size = require("ui/size")
 local SQ3 = require("lua-ljsqlite3/init")
 local TextBoxWidget = require("ui/widget/textboxwidget")
@@ -83,6 +89,7 @@ local PATCH_L10N = {
         ["CURRENT STREAK"] = "CURRENT STREAK",
         ["BEST STREAK"] = "BEST STREAK",
         ["DAYS READ PER MONTH"] = "DAYS READ PER MONTH",
+        ["HOURS READ PER MONTH"] = "HOURS READ PER MONTH",
         ["Reading statistics: reading insights"] = "Reading statistics: reading insights",
         ["Unknown"] = "Unknown",
         ["No books read"] = "No books read",
@@ -138,6 +145,7 @@ local PATCH_L10N = {
         ["CURRENT STREAK"] = "CHUỖI LIÊN TIẾP HIỆN TẠI",
         ["BEST STREAK"] = "CHUỖI LIÊN TIẾP DÀI NHẤT",
         ["DAYS READ PER MONTH"] = "SỐ NGÀY ĐỌC MỖI THÁNG",
+        ["HOURS READ PER MONTH"] = "SỐ GIỜ ĐỌC MỖI THÁNG",
         ["Reading statistics: reading insights"] = "Thống kê đọc: phân tích",
         ["Unknown"] = "Không rõ",
         ["No books read"] = "Chưa đọc sách nào",
@@ -179,6 +187,14 @@ local function formatCount(value)
     return util.getFormattedSize(value)
 end
 
+local function formatNumber(value)
+    if value == nil then return "" end
+    if type(value) == "number" and value % 1 ~= 0 then
+        return string.format("%.1f", value)
+    end
+    return formatCount(value)
+end
+
 local MONTH_NAMES_SHORT = {
     _("Jan"), _("Feb"), _("Mar"), _("Apr"), _("May"), _("Jun"),
     _("Jul"), _("Aug"), _("Sep"), _("Oct"), _("Nov"), _("Dec"),
@@ -190,6 +206,30 @@ local MONTH_NAMES_FULL = {
 
 local db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
 local ReadingInsightsPopup
+
+local INSIGHTS_MODE_KEY = "reading_insights_popup_mode"
+local INSIGHTS_MODE_DAYS = "days"
+local INSIGHTS_MODE_HOURS = "hours"
+
+local function normalizeInsightsMode(mode)
+    if mode == INSIGHTS_MODE_HOURS then
+        return INSIGHTS_MODE_HOURS
+    end
+    return INSIGHTS_MODE_DAYS
+end
+
+local function readInsightsMode()
+    if G_reader_settings and G_reader_settings.readSetting then
+        return normalizeInsightsMode(G_reader_settings:readSetting(INSIGHTS_MODE_KEY, INSIGHTS_MODE_DAYS))
+    end
+    return INSIGHTS_MODE_DAYS
+end
+
+local function saveInsightsMode(mode)
+    if G_reader_settings and G_reader_settings.saveSetting then
+        G_reader_settings:saveSetting(INSIGHTS_MODE_KEY, mode)
+    end
+end
 
 local function withStatsDb(fallback, fn)
     local lfs = require("libs/libkoreader-lfs")
@@ -288,6 +328,18 @@ local function formatTimeRead(seconds)
             return string.format("%.0f", h), N_("hour read", "hours read", h)
         end
     end
+end
+
+local function formatHoursRead(seconds)
+    if not seconds or seconds <= 0 then
+        return "0", N_("hour read", "hours read", 0)
+    end
+
+    local hours = seconds / 3600
+    if hours < 10 then
+        return string.format("%.1f", hours), N_("hour read", "hours read", hours)
+    end
+    return string.format("%.0f", hours), N_("hour read", "hours read", hours)
 end
 
 local function getSerifFace(font_name, fallback_name, size)
@@ -498,12 +550,20 @@ local function buildYearHeader(popup_self, font_section, layout, year_range)
 end
 
 local function buildYearlyRow(popup_self, yearly_stats, fonts, layout)
-    local days_val = buildValueLine(
+    local left_value = ""
+    local left_unit = ""
+    if popup_self.mode == INSIGHTS_MODE_HOURS then
+        left_value, left_unit = formatHoursRead(yearly_stats.duration)
+    else
+        left_value = formatCount(yearly_stats.days)
+        left_unit = N_("day read", "days read", yearly_stats.days)
+    end
+    local left_line = buildValueLine(
         fonts.value,
         fonts.label,
         layout.col_width,
-        formatCount(yearly_stats.days),
-        N_("day read", "days read", yearly_stats.days)
+        left_value,
+        left_unit
     )
     local pages_val = buildValueLine(
         fonts.value,
@@ -513,32 +573,47 @@ local function buildYearlyRow(popup_self, yearly_stats, fonts, layout)
         N_("page read", "pages read", yearly_stats.pages)
     )
 
-    local yearly_row = buildTwoColRow(days_val, pages_val, layout)
-
-    local yearly_row_container = FrameContainer:new{
-        bordersize = 0,
-        padding = 0,
-        padded(layout.padding_h, yearly_row),
+    local selected_year_for_tap = popup_self.selected_year
+    local left_cell = InputContainer:new{
+        dimen = Geom:new{ w = layout.col_width, h = left_line:getSize().h },
+        left_line,
     }
-    local tappable_yearly_row = InputContainer:new{
-        dimen = yearly_row_container:getSize(),
-        yearly_row_container,
-    }
-    tappable_yearly_row.ges_events = {
+    left_cell.ges_events = {
         Tap = {
             GestureRange:new{
                 ges = "tap",
-                range = function() return tappable_yearly_row.dimen end,
+                range = function() return left_cell.dimen end,
             }
         },
     }
-    local selected_year_for_tap = popup_self.selected_year
-    function tappable_yearly_row:onTap()
+    function left_cell:onTap()
+        popup_self:toggleInsightsMode()
+        return true
+    end
+
+    local right_cell = InputContainer:new{
+        dimen = Geom:new{ w = layout.col_width, h = pages_val:getSize().h },
+        pages_val,
+    }
+    right_cell.ges_events = {
+        Tap = {
+            GestureRange:new{
+                ges = "tap",
+                range = function() return right_cell.dimen end,
+            }
+        },
+    }
+    function right_cell:onTap()
         popup_self:showBooksForYear(selected_year_for_tap)
         return true
     end
 
-    return tappable_yearly_row
+    local yearly_row = buildTwoColRow(left_cell, right_cell, layout)
+    return FrameContainer:new{
+        bordersize = 0,
+        padding = 0,
+        padded(layout.padding_h, yearly_row),
+    }
 end
 
 local function buildMonthlyChart(popup_self, monthly_data, layout, fonts)
@@ -546,10 +621,11 @@ local function buildMonthlyChart(popup_self, monthly_data, layout, fonts)
         return nil
     end
 
-    local max_days = 1
+    local value_key = popup_self.mode == INSIGHTS_MODE_HOURS and "hours" or "days"
+    local max_value = 1
     for _, m in ipairs(monthly_data) do
-        local d = tonumber(m.days) or 0
-        if d > max_days then max_days = d end
+        local v = tonumber(m[value_key]) or 0
+        if v > max_value then max_value = v end
     end
 
     local chart_width = layout.content_width
@@ -572,21 +648,21 @@ local function buildMonthlyChart(popup_self, monthly_data, layout, fonts)
         local total_bar_height = bar_height + label_height
 
         for i, m in ipairs(data_slice) do
-            local days = tonumber(m.days) or 0
-            local ratio = max_days > 0 and (days / max_days) or 0
+            local value = tonumber(m[value_key]) or 0
+            local ratio = max_value > 0 and (value / max_value) or 0
             local bar_h = math.floor(ratio * bar_height + 0.5)
-            if bar_h == 0 and days > 0 then bar_h = 1 end
+            if bar_h == 0 and value > 0 then bar_h = 1 end
 
             local is_current = (popup_self.selected_year == current_year) and (m.month == current_month)
             local bar_color = is_current and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_GRAY
 
-            local day_label = TextWidget:new{
-                text = formatCount(days),
+            local value_label = TextWidget:new{
+                text = formatNumber(value),
                 face = font_small,
             }
             local centered_label = CenterContainer:new{
                 dimen = Geom:new{ w = bar_width, h = label_height },
-                day_label,
+                value_label,
             }
 
             local bar_column = VerticalGroup:new{
@@ -761,9 +837,29 @@ local function buildInsightsSections(popup_self, streaks, yearly_stats, year_ran
 
     local chart = buildMonthlyChart(popup_self, monthly_data, layout, fonts)
     if chart then
+        local chart_header_text = popup_self.mode == INSIGHTS_MODE_HOURS
+            and _("HOURS READ PER MONTH")
+            or _("DAYS READ PER MONTH")
+        local chart_header = buildSectionHeader(fonts.section, chart_header_text, layout.full_width)
+        local tappable_chart_header = InputContainer:new{
+            dimen = chart_header:getSize(),
+            chart_header,
+        }
+        tappable_chart_header.ges_events = {
+            Tap = {
+                GestureRange:new{
+                    ges = "tap",
+                    range = function() return tappable_chart_header.dimen end,
+                }
+            },
+        }
+        function tappable_chart_header:onTap()
+            popup_self:toggleInsightsMode()
+            return true
+        end
         addSectionWithRow(
             sections,
-            buildSectionHeader(fonts.section, _("DAYS READ PER MONTH"), layout.full_width),
+            tappable_chart_header,
             chart,
             layout,
             { add_divider = false }
@@ -782,7 +878,7 @@ Dispatcher:registerAction("reading_insights_popup", {
     category = "none",
     event = "ShowReadingInsightsPopup",
     title = _("Reading statistics: reading insights"),
-    reader = true,
+    general = true,
 })
 
 ReadingInsightsPopup = InputContainer:extend{
@@ -791,6 +887,7 @@ ReadingInsightsPopup = InputContainer:extend{
     width = nil,
     height = nil,
     selected_year = nil, -- for yearly stats section
+    mode = nil,
 }
 
 -- Streaks are computed from distinct local dates/weeks in page_stat.
@@ -905,8 +1002,53 @@ function ReadingInsightsPopup:getMonthlyReadingDays(year)
     end)
 end
 
+function ReadingInsightsPopup:getMonthlyReadingHours(year)
+    local months = {}
+    return withStatsDb(months, function(conn)
+        local year_str = tostring(year)
+        local sql = string.format([[
+            SELECT dates AS month,
+                   SUM(sum_duration) / 3600.0 AS hours_read
+            FROM (
+                SELECT strftime('%%Y-%%m', start_time, 'unixepoch', 'localtime') AS dates,
+                       sum(duration) AS sum_duration
+                FROM page_stat
+                WHERE strftime('%%Y', start_time, 'unixepoch', 'localtime') = '%s'
+                GROUP BY id_book, page, dates
+            )
+            GROUP BY dates
+            ORDER BY dates ASC
+        ]], year_str)
+
+        local results = {}
+        withStatement(conn, sql, function(stmt)
+            for row in stmt:rows() do
+                results[row[1]] = row[2]
+            end
+        end)
+
+        for month_num = 1, 12 do
+            local year_month = string.format("%04d-%02d", year, month_num)
+            local hours = tonumber(results[year_month]) or 0
+            if hours >= 1 then
+                hours = math.floor(hours)
+            elseif hours > 0 then
+                hours = (math.floor(hours * 10)) / 10
+            end
+            table.insert(months, {
+                month = year_month,
+                hours = hours,
+                label = MONTH_NAMES_SHORT[month_num],
+                label_full = MONTH_NAMES_FULL[month_num],
+            })
+        end
+
+        return months
+    end)
+end
+
 function ReadingInsightsPopup:getYearlyStats(year)
-    local stats = { days = 0, pages = 0 }
+    local stats = { days = 0, pages = 0, duration = 0 }
     return withStatsDb(stats, function(conn)
         local year_str = tostring(year)
 
@@ -934,6 +1076,17 @@ function ReadingInsightsPopup:getYearlyStats(year)
         withStatement(conn, sql_pages, function(stmt_pages)
             for row in stmt_pages:rows() do
                 stats.pages = tonumber(row[1]) or 0
+            end
+        end)
+
+        local sql_duration = string.format([[
+            SELECT sum(duration)
+            FROM page_stat
+            WHERE strftime('%%Y', start_time, 'unixepoch', 'localtime') = '%s'
+        ]], year_str)
+        withStatement(conn, sql_duration, function(stmt_duration)
+            for row in stmt_duration:rows() do
+                stats.duration = tonumber(row[1]) or 0
             end
         end)
 
@@ -1074,6 +1227,7 @@ local function showBooksForPeriod(popup_self, books, empty_text, title)
 
     local ui = popup_self.ui
     local selected_year = popup_self.selected_year
+    local mode = popup_self.mode
     UIManager:close(popup_self)
 
     showBookList(
@@ -1083,6 +1237,7 @@ local function showBooksForPeriod(popup_self, books, empty_text, title)
             local new_popup = ReadingInsightsPopup:new{
                 ui = ui,
                 selected_year = selected_year,
+                mode = mode,
             }
             UIManager:show(new_popup)
         end
@@ -1117,14 +1272,21 @@ end
 function ReadingInsightsPopup:init()
     local screen_w = Screen:getWidth()
     local screen_h = Screen:getHeight()
+    self.mode = normalizeInsightsMode(self.mode or readInsightsMode())
     local today_stats = self:getTodayStats()
     local streaks = self:calculateStreaks()
     local year_range = self:getYearRange()
+    self.year_range = year_range
     if not self.selected_year then
         self.selected_year = year_range.max_year
     end
     local yearly_stats = self:getYearlyStats(self.selected_year)
-    local monthly_data = self:getMonthlyReadingDays(self.selected_year)
+    local monthly_data
+    if self.mode == INSIGHTS_MODE_HOURS then
+        monthly_data = self:getMonthlyReadingHours(self.selected_year)
+    else
+        monthly_data = self:getMonthlyReadingDays(self.selected_year)
+    end
 
     local fonts = buildSerifFonts()
     local layout = buildLayout(screen_w, Size.padding.large, Screen:scaleBySize(20))
@@ -1162,6 +1324,60 @@ function ReadingInsightsPopup:init()
             }
         }
     end
+
+    if Device:hasKeys() then
+        self.key_events.AnyKeyPressed = { { Device.input.group.Any } }
+    end
+end
+
+function ReadingInsightsPopup:toggleInsightsMode()
+    local new_mode = self.mode == INSIGHTS_MODE_HOURS and INSIGHTS_MODE_DAYS or INSIGHTS_MODE_HOURS
+    saveInsightsMode(new_mode)
+    UIManager:close(self)
+    local new_popup = ReadingInsightsPopup:new{
+        ui = self.ui,
+        selected_year = self.selected_year,
+        mode = new_mode,
+    }
+    UIManager:show(new_popup)
+    return true
+end
+
+function ReadingInsightsPopup:onGoToPrevYear()
+    if self.selected_year > self.year_range.min_year then
+        UIManager:close(self)
+        local new_popup = ReadingInsightsPopup:new{
+            ui = self.ui,
+            selected_year = self.selected_year - 1,
+            mode = self.mode,
+        }
+        UIManager:show(new_popup)
+    end
+    return true
+end
+
+function ReadingInsightsPopup:onAnyKeyPressed(_, key)
+    if key and key:match({ { "RPgBack", "LPgBack", "Left" } }) then
+        return self:onGoToPrevYear()
+    end
+    if key and key:match({ { "RPgFwd", "LPgFwd", "Right" } }) then
+        return self:onGoToNextYear()
+    end
+    UIManager:close(self)
+    return true
+end
+
+function ReadingInsightsPopup:onGoToNextYear()
+    if self.selected_year < self.year_range.max_year then
+        UIManager:close(self)
+        local new_popup = ReadingInsightsPopup:new{
+            ui = self.ui,
+            selected_year = self.selected_year + 1,
+            mode = self.mode,
+        }
+        UIManager:show(new_popup)
+    end
+    return true
 end
 
 function ReadingInsightsPopup:onShow()
@@ -1181,18 +1397,18 @@ function ReadingInsightsPopup:onCloseWidget()
 end
 
 -- Hook into ReaderUI to handle the event
-local ReaderUI = require("apps/reader/readerui")
-local orig_ReaderUI_registerKeyEvents = ReaderUI.registerKeyEvents
+function ReaderUI.onShowReadingInsightsPopup(this)
+    local popup = ReadingInsightsPopup:new{
+        ui = this,
+    }
+    UIManager:show(popup)
+    return true
+end
 
-ReaderUI.registerKeyEvents = function(self)
-    if orig_ReaderUI_registerKeyEvents then
-        orig_ReaderUI_registerKeyEvents(self)
-    end
-    self.onShowReadingInsightsPopup = function(this)
-        local popup = ReadingInsightsPopup:new{
-            ui = this,
-        }
-        UIManager:show(popup)
-        return true
-    end
+function FileManager:onShowReadingInsightsPopup()
+    local popup = ReadingInsightsPopup:new{
+        ui = this,
+    }
+    UIManager:show(popup)
+    return true
 end

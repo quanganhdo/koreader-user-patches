@@ -22,6 +22,14 @@ local PATCH_L10N = {
         ["left in chapter"] = "còn lại trong chương",
         ["left in book"] = "còn lại trong sách",
     },
+    ru = {
+        ["hr"] = "ч.",
+        ["hrs"] = "ч.",
+        ["min"] = "мин.",
+        ["mins"] = "мин.",
+        ["left in chapter"] = "осталось в главе",
+        ["left in book"] = "осталось в книге",
+    },	
 }
 
 local function l10nLookup(msg)

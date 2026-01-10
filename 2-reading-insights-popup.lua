@@ -189,8 +189,8 @@ end
 
 local function formatNumber(value)
     if value == nil then return "" end
-    if type(value) == "number" and value % 1 ~= 0 then
-        return string.format("%.1f", value)
+    if type(value) == "number" then
+        return string.format("%.0f", value)
     end
     return formatCount(value)
 end
@@ -336,10 +336,8 @@ local function formatHoursRead(seconds)
     end
 
     local hours = seconds / 3600
-    if hours < 10 then
-        return string.format("%.1f", hours), N_("hour read", "hours read", hours)
-    end
-    return string.format("%.0f", hours), N_("hour read", "hours read", hours)
+    local rounded = math.ceil(hours)
+    return formatCount(rounded), N_("hour read", "hours read", rounded)
 end
 
 local function getSerifFace(font_name, fallback_name, size)
@@ -625,6 +623,9 @@ local function buildMonthlyChart(popup_self, monthly_data, layout, fonts)
     local max_value = 1
     for _, m in ipairs(monthly_data) do
         local v = tonumber(m[value_key]) or 0
+        if popup_self.mode == INSIGHTS_MODE_HOURS then
+            v = math.ceil(v)
+        end
         if v > max_value then max_value = v end
     end
 
@@ -649,6 +650,9 @@ local function buildMonthlyChart(popup_self, monthly_data, layout, fonts)
 
         for i, m in ipairs(data_slice) do
             local value = tonumber(m[value_key]) or 0
+            if popup_self.mode == INSIGHTS_MODE_HOURS then
+                value = math.ceil(value)
+            end
             local ratio = max_value > 0 and (value / max_value) or 0
             local bar_h = math.floor(ratio * bar_height + 0.5)
             if bar_h == 0 and value > 0 then bar_h = 1 end
@@ -1030,11 +1034,6 @@ function ReadingInsightsPopup:getMonthlyReadingHours(year)
         for month_num = 1, 12 do
             local year_month = string.format("%04d-%02d", year, month_num)
             local hours = tonumber(results[year_month]) or 0
-            if hours >= 1 then
-                hours = math.floor(hours)
-            elseif hours > 0 then
-                hours = (math.floor(hours * 10)) / 10
-            end
             table.insert(months, {
                 month = year_month,
                 hours = hours,

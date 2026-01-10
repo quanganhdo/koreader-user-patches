@@ -1,7 +1,7 @@
 --[[
 Reading Insights Popup - Reading stats and streaks overlay
 Shows: Today (time/pages), Current/Best streaks, Year totals, Monthly chart, books list on tap
-Controls: Any key to dismiss; Prev/Next to navigate years
+Controls: Any key to dismiss; Prev/Next to navigate years; Center D-pad to toggle between days/hours
 Tap left yearly value to switch days/hours
 Tap right yearly value or monthly bars to open book list
 Tap monthly header to switch days/hours
@@ -1361,6 +1361,9 @@ function ReadingInsightsPopup:onAnyKeyPressed(_, key)
     end
     if key and key:match({ { "RPgFwd", "LPgFwd", "Right" } }) then
         return self:onGoToNextYear()
+    end
+    if key and key:match({ { "Press" } }) then 
+        return self:toggleInsightsMode() 
     end
     UIManager:close(self)
     return true

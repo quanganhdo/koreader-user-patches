@@ -273,6 +273,24 @@ local function openInsightsCache()
     return cache
 end
 
+local function buildMonthlyData(year, values, value_key)
+    local months = {}
+    if type(values) ~= "table" then
+        values = {}
+    end
+    for month_num = 1, 12 do
+        local year_month = string.format("%04d-%02d", year, month_num)
+        local value = tonumber(values[month_num]) or 0
+        table.insert(months, {
+            month = year_month,
+            [value_key] = value,
+            label = MONTH_NAMES_SHORT[month_num],
+            label_full = MONTH_NAMES_FULL[month_num],
+        })
+    end
+    return months
+end
+
 local function withStatement(conn, sql, fn)
     local stmt = conn:prepare(sql)
     if not stmt then return end
@@ -1012,19 +1030,15 @@ function ReadingInsightsPopup:getMonthlyReadingDays(year)
         local results = {}
         withStatement(conn, sql, function(stmt)
             for row in stmt:rows() do
-                results[row[1]] = row[2]
+                local month_num = row[1] and tonumber(row[1]:sub(6, 7))
+                if month_num then
+                    results[month_num] = row[2]
+                end
             end
         end)
 
         for month_num = 1, 12 do
-            local year_month = string.format("%04d-%02d", year, month_num)
-            local days = tonumber(results[year_month]) or 0
-            table.insert(months, {
-                month = year_month,
-                days = days,
-                label = MONTH_NAMES_SHORT[month_num],
-                label_full = MONTH_NAMES_FULL[month_num],
-            })
+            months[month_num] = tonumber(results[month_num]) or 0
         end
 
         return months
@@ -1052,19 +1066,15 @@ function ReadingInsightsPopup:getMonthlyReadingHours(year)
         local results = {}
         withStatement(conn, sql, function(stmt)
             for row in stmt:rows() do
-                results[row[1]] = row[2]
+                local month_num = row[1] and tonumber(row[1]:sub(6, 7))
+                if month_num then
+                    results[month_num] = row[2]
+                end
             end
         end)
 
         for month_num = 1, 12 do
-            local year_month = string.format("%04d-%02d", year, month_num)
-            local hours = tonumber(results[year_month]) or 0
-            table.insert(months, {
-                month = year_month,
-                hours = hours,
-                label = MONTH_NAMES_SHORT[month_num],
-                label_full = MONTH_NAMES_FULL[month_num],
-            })
+            months[month_num] = tonumber(results[month_num]) or 0
         end
 
         return months
@@ -1363,16 +1373,22 @@ function ReadingInsightsPopup:init()
         and ((self.mode == INSIGHTS_MODE_HOURS and cached_last_read_ts ~= last_read_ts)
             or (self.mode ~= INSIGHTS_MODE_HOURS and cached_last_read_day ~= last_read_day))
 
-    if not monthly_by_mode[selected_year_key] or refresh_monthly then
+    local monthly_values = monthly_by_mode[selected_year_key]
+    if type(monthly_values) ~= "table" or type(monthly_values[1]) == "table" then
+        monthly_values = nil
+    end
+    if not monthly_values or refresh_monthly then
         if self.mode == INSIGHTS_MODE_HOURS then
-            monthly_by_mode[selected_year_key] = self:getMonthlyReadingHours(self.selected_year)
+            monthly_values = self:getMonthlyReadingHours(self.selected_year)
         else
-            monthly_by_mode[selected_year_key] = self:getMonthlyReadingDays(self.selected_year)
+            monthly_values = self:getMonthlyReadingDays(self.selected_year)
         end
+        monthly_by_mode[selected_year_key] = monthly_values
         cache.data.monthly_data = monthly_data_cache
         cache_dirty = true
     end
-    local monthly_data = monthly_by_mode[selected_year_key] or {}
+    local value_key = mode_key
+    local monthly_data = buildMonthlyData(self.selected_year, monthly_values, value_key)
 
     if cached_last_read_ts ~= last_read_ts
         or cached_last_read_day ~= last_read_day

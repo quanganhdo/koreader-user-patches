@@ -1307,6 +1307,9 @@ function ReadingInsightsPopup:init()
     local screen_w = Screen:getWidth()
     local screen_h = Screen:getHeight()
     self.mode = normalizeInsightsMode(self.mode or readInsightsMode())
+    if self.ui and self.ui.statistics and self.ui.statistics.insertDB then
+        self.ui.statistics:insertDB()
+    end
     local today_stats = self:getTodayStats()
 
     local cache = openInsightsCache()

@@ -1174,7 +1174,7 @@ function ReadingInsightsPopup:getBooksForMonth(year_month)
     return getBooksForPeriod("%Y-%m", year_month)
 end
 
-local function showBookList(title, books, on_close)
+local function showBookList(title, books)
     local Menu = require("ui/widget/menu")
 
     if #books == 0 then
@@ -1205,11 +1205,11 @@ local function showBookList(title, books, on_close)
         item_table = item_table,
         width = Screen:getWidth(),
         height = Screen:getHeight(),
+        modal = true,
         is_borderless = true,
         is_popout = false,
         close_callback = function()
             UIManager:close(menu)
-            if on_close then on_close() end
         end,
     }
     UIManager:show(menu)
@@ -1224,22 +1224,9 @@ local function showBooksForPeriod(popup_self, books, empty_text, title)
         return
     end
 
-    local ui = popup_self.ui
-    local selected_year = popup_self.selected_year
-    local mode = popup_self.mode
-    UIManager:close(popup_self)
-
     showBookList(
         title,
-        books,
-        function()
-            local new_popup = ReadingInsightsPopup:new{
-                ui = ui,
-                selected_year = selected_year,
-                mode = mode,
-            }
-            UIManager:show(new_popup)
-        end
+        books
     )
 end
 

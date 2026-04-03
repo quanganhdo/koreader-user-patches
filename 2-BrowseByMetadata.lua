@@ -485,6 +485,7 @@ function FileChooser:getVirtualList(path, collate)
                 local representative_path = self.ui and self.ui.coverbrowser and self.ui.coverbrowser:getRepresentativeFilepath(this_path)
                 if representative_path then
                     item.is_virtual_metadata_leaf = true
+                    item.virtual_leaf_count = v[2]
                     item.representative_filepath = representative_path
                 end
                 table.insert(dirs, item)
@@ -607,10 +608,20 @@ end
 
 userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
     local BookInfoManager = require("bookinfomanager")
+    local Blitbuffer = require("ffi/blitbuffer")
+    local BD = require("ui/bidi")
+    local Device = require("device")
+    local Font = require("ui/font")
+    local Geom = require("ui/geometry")
+    local CenterContainer = require("ui/widget/container/centercontainer")
+    local FrameContainer = require("ui/widget/container/framecontainer")
     local MosaicMenu = require("mosaicmenu")
     local MosaicMenuItem = userpatch.getUpValue(MosaicMenu._updateItemsBuildUI, "MosaicMenuItem")
     local ListMenu = require("listmenu")
     local ListMenuItem = userpatch.getUpValue(ListMenu._updateItemsBuildUI, "ListMenuItem")
+    local Size = require("ui/size")
+    local TextWidget = require("ui/widget/textwidget")
+    local Screen = Device.screen
 
     -- Add BookInfoManager:getMatchingMetadataValues()
     function BookInfoManager:getMatchingMetadataValues(base_dir, meta_name, filters)
@@ -740,6 +751,83 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         return filepath or nil
     end
 
+    local badge_cache = {}
+    local badge_face = Font:getFace("infont", 13)
+    local badge_min_text = TextWidget:new{
+        text = "99",
+        face = badge_face,
+        fgcolor = Blitbuffer.COLOR_WHITE,
+    }
+    local badge_min_text_w = badge_min_text:getSize().w
+    local function getVirtualLeafBadge(count)
+        local text = tostring(count or "")
+        if badge_cache[text] then
+            return badge_cache[text]
+        end
+        local text_widget = TextWidget:new{
+            text = text,
+            face = badge_face,
+            fgcolor = Blitbuffer.COLOR_WHITE,
+        }
+        local text_size = text_widget:getSize()
+        local padding_h = Screen:scaleBySize(4)
+        local padding_v = Screen:scaleBySize(2)
+        local inner_w = math.max(badge_min_text_w, text_size.w)
+        local inner_h = text_size.h
+        local badge = FrameContainer:new{
+            margin = 0,
+            padding_top = padding_v,
+            padding_bottom = padding_v,
+            padding_left = padding_h,
+            padding_right = padding_h,
+            bordersize = math.max(1, Size.line.thin),
+            color = Blitbuffer.COLOR_WHITE,
+            radius = math.floor((inner_h + padding_v * 2) / 2) + 1,
+            background = Blitbuffer.COLOR_BLACK,
+            CenterContainer:new{
+                dimen = Geom:new{ w = inner_w, h = inner_h },
+                text_widget,
+            },
+        }
+        badge_cache[text] = badge
+        return badge
+    end
+
+    local function paintVirtualLeafFolderDecoration(item, bb)
+        if not item.entry or not item.entry.is_virtual_metadata_leaf or not item.entry.virtual_leaf_count then
+            return
+        end
+        local target = item[1] and item[1][1] and item[1][1][1]
+        if not target or not target.dimen then
+            return
+        end
+
+        local tx = target.dimen.x
+        local ty = target.dimen.y
+        local tw = target.dimen.w
+        local th = target.dimen.h
+        local line_h = math.max(2, Size.line.thin)
+        local line_w1 = math.floor(tw * 0.80)
+        local line_w2 = math.floor(tw * 0.90)
+        local line_x1 = tx + math.floor((tw - line_w1) / 2)
+        local line_x2 = tx + math.floor((tw - line_w2) / 2)
+        local line_y1 = math.max(0, ty - Screen:scaleBySize(8))
+        local line_y2 = math.max(line_y1 + line_h + 1, ty - Screen:scaleBySize(4))
+        bb:paintRect(line_x1, line_y1, line_w1, line_h, Blitbuffer.COLOR_GRAY_9)
+        bb:paintRect(line_x2, line_y2, line_w2, line_h, Blitbuffer.COLOR_GRAY_9)
+
+        local badge = getVirtualLeafBadge(item.entry.virtual_leaf_count)
+        local badge_size = badge:getSize()
+        local badge_x
+        if BD.mirroredUILayout() then
+            badge_x = tx + Screen:scaleBySize(5)
+        else
+            badge_x = tx + tw - badge_size.w - Screen:scaleBySize(5)
+        end
+        local badge_y = ty + th - badge_size.h - Screen:scaleBySize(5)
+        badge:paintTo(bb, badge_x, badge_y)
+    end
+
     local function withRepresentativeFileEntry(item, update_func, ...)
         if not item.entry or not item.entry.is_virtual_metadata_leaf or not item.entry.representative_filepath then
             return update_func(item, ...)
@@ -762,6 +850,12 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
     local MosaicMenuItem_update = MosaicMenuItem.update
     function MosaicMenuItem:update(...)
         return withRepresentativeFileEntry(self, MosaicMenuItem_update, ...)
+    end
+
+    local MosaicMenuItem_paintTo = MosaicMenuItem.paintTo
+    function MosaicMenuItem:paintTo(bb, x, y)
+        MosaicMenuItem_paintTo(self, bb, x, y)
+        paintVirtualLeafFolderDecoration(self, bb)
     end
 
     local ListMenuItem_update = ListMenuItem.update

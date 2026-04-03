@@ -9,7 +9,6 @@
 --   * I don't know what effect this was supposed to have, possibly change the display? It seems like it may already evaluate to true
 -- * removed unused item.nb_sub_dirs display formatting
 -- * instead of patching FileChooser:changeToPath(), ffiUtil.realpath() is patched globally to support virtual directories
--- * added support for a "Recent filters (global)" virtual folder (adds write functionality)
 -- * added fallback in genItemTable() to support file search results with nil path
 
 local userpatch = require("userpatch")
@@ -21,50 +20,7 @@ local _ = require("gettext")
 local T = ffiUtil.template
 
 local FileManager = require("apps/filemanager/filemanager")
-local FileManagerMenu = require("apps/filemanager/filemanagermenu")
 local FileChooser = require("ui/widget/filechooser")
-
---------------------------------------------------------------------------------
--- [Recent filter init]: storing + showing recent metadata paths
---------------------------------------------------------------------------------
-local LuaSettings = require("luasettings")
-
-local RECENT_FILTERS_MAX = 10
-
-local recent_filter_settings = LuaSettings:open("browse_by_metadata_recent_filters")
-local recent_filters = recent_filter_settings:readSetting("recent_filters", {})
-local recent_filters_updated = false
-
-local function addRecentFilter(path)
-    -- remove if already in the list
-    for i = #recent_filters, 1, -1 do
-        if recent_filters[i] == path then
-            table.remove(recent_filters, i)
-        end
-    end
-
-    -- insert at front
-    table.insert(recent_filters, 1, path)
-
-    -- keep only RECENT_FILTERS_MAX
-    while #recent_filters > RECENT_FILTERS_MAX do
-        table.remove(recent_filters)
-    end
-
-    recent_filters_updated = true
-end
-
-local orig_onFlushSettings = FileManagerMenu.onFlushSettings
-FileManagerMenu.onFlushSettings = function(self, ...)
-    if recent_filters_updated then
-        recent_filter_settings:flush()
-        recent_filters_updated = false
-    end
-    if orig_onFlushSettings then
-        return orig_onFlushSettings(self, ...)
-    end
-end
---------------------------------------------------------------------------------
 
 -- "\u{EA30} browse by metadata \u{EA30} \u{E7F5} \u{E7FC} \u{e8d5} \u{eec3} \u{e93a} \u{e92f} \u{e9c4} \u{ed49} \u{ea27} \u{edf8} \u{ebfa} \u{ebf8} \u{ebfc} \u{ec66} \u{ec68} \u{ec6d} \u{ec9e}"
 local VIRTUAL_ITEMS = {
@@ -74,17 +30,6 @@ local VIRTUAL_ITEMS = {
         symbol = "\u{e257}",
         -- symbol = "\u{ee30}",
         -- symbol = "\u{ee26}",
-    },
-    TITLE = {
-        browse_text = _("Browse by title"),
-        filter_text = _("Filter by title"),
-        db_column = "title",
-        symbol = "\u{f02d}",
-        -- symbol = "\u{edf8}",
-        -- symbol = "\u{e28B}",
-        -- symbol = "\u{e7bc}",
-        -- symbol = "\u{e8fc}",
-        -- symbol = "\u{ea31}",
     },
     AUTHOR = {
         browse_text = _("Browse by author"),
@@ -107,36 +52,11 @@ local VIRTUAL_ITEMS = {
         -- symbol = "\u{f03d}",
         -- symbol = "\u{f447}",
     },
-    LANGUAGE = {
-        browse_text = _("Browse by language"),
-        filter_text = _("Filter by language"),
-        db_column = "language",
-        symbol = "\u{f0e5}",
-        -- symbol = "\u{ec9e}",
-    },
-    KEYWORD = {
-        browse_text = _("Browse by keyword"),
-        filter_text = _("Filter by keyword"),
-        db_column = "keywords",
-        symbol = "\u{f412}",
-        -- symbol = "\u{e8d5}",
-    },
-    RECENT = {
-        browse_text = _("Recent filters (global)"),
-        filter_text = _("Recent filters (global)"),
-        db_column = false, -- not actually used
-        symbol = "\u{1F553}", -- e.g., “clock face eight-thirty” icon
-    },
-    -- YEAR "\u{f073}", but not available in bookinfo or cre
 }
 
 local VIRTUAL_SUBITEMS_ORDERED = {
-    VIRTUAL_ITEMS.RECENT,
-    VIRTUAL_ITEMS.TITLE,
     VIRTUAL_ITEMS.AUTHOR,
     VIRTUAL_ITEMS.SERIES,
-    VIRTUAL_ITEMS.LANGUAGE,
-    VIRTUAL_ITEMS.KEYWORD,
 }
 local VIRTUAL_ROOT_SYMBOL = VIRTUAL_ITEMS.ROOT.symbol
 local VIRTUAL_SYMBOLS = {}
@@ -179,10 +99,8 @@ local function parseVirtualPath(path)
         local fragment = table.remove(fragments)
         local meta = VIRTUAL_SYMBOLS[fragment]
         if meta then
-            if meta == VIRTUAL_ITEMS.ROOT or meta == VIRTUAL_ITEMS.TITLE then
+            if meta == VIRTUAL_ITEMS.ROOT then
                 do end
-            elseif meta == VIRTUAL_ITEMS.RECENT then
-                return
             else
                 local db_meta_name = meta.db_column
                 if cur_value ~= nil then
@@ -201,10 +119,6 @@ local function parseVirtualPath(path)
                 cur_value = false
             end
         end
-    end
-
-    if meta_name == "title" then
-        meta_name = nil
     end
     return base_dir, meta_name, filters, filters_seen
 end
@@ -241,8 +155,6 @@ local function getVirtualSubtitle(path)
     local labels = {
         authors = _("Authors"),
         series = _("Series"),
-        language = _("Languages"),
-        keywords = _("Keywords"),
     }
 
     if filters and #filters > 0 then
@@ -274,8 +186,6 @@ end
 
 registerBrowseAction("browse_by_metadata_author", "author", _("Browse by author"))
 registerBrowseAction("browse_by_metadata_series", "series", _("Browse by series"))
-registerBrowseAction("browse_by_metadata_language", "language", _("Browse by language"))
-registerBrowseAction("browse_by_metadata_keyword", "keyword", _("Browse by keyword"))
 
 -- Patch FileManager:setupLayout()
 local FileManager_setupLayout = FileManager.setupLayout
@@ -323,10 +233,6 @@ function FileManager:onBrowseByMetadata(kind)
         item = VIRTUAL_ITEMS.AUTHOR
     elseif kind == "series" then
         item = VIRTUAL_ITEMS.SERIES
-    elseif kind == "language" then
-        item = VIRTUAL_ITEMS.LANGUAGE
-    elseif kind == "keyword" then
-        item = VIRTUAL_ITEMS.KEYWORD
     else
         return
     end
@@ -356,30 +262,10 @@ function FileChooser:getVirtualPathTypePath(path)
     if symbol then
         if symbol == VIRTUAL_ITEMS.ROOT then
             return VIRTUAL_PATH_TYPE_ROOT
-        elseif symbol ~= VIRTUAL_ITEMS.TITLE then
-            return VIRTUAL_PATH_TYPE_META_VALUES_LIST
         end
+        return VIRTUAL_PATH_TYPE_META_VALUES_LIST
     end
     return VIRTUAL_PATH_TYPE_MATCHING_FILES
-end
-
-function FileChooser:listRecentFilters(collate)
-    local dirs = {}
-    for i, vpath in ipairs(recent_filters) do
-        local _, display_name = util.splitFilePathName(vpath)
-        local fake_attributes = {
-            mode = "directory",
-            modification = 0,
-            access = 0,
-            change = 0,
-            size = i,
-        }
-        local label = VIRTUAL_ITEMS.RECENT.symbol .. " " .. display_name
-        local item = self:getListItem(nil, label, vpath, fake_attributes, collate)
-        table.insert(dirs, item)
-    end
-
-    return dirs
 end
 
 
@@ -420,18 +306,6 @@ function FileChooser:getVirtualList(path, collate)
         return dirs, files
     end
 
-    -- Check if user tapped the "RECENT" item
-    local last_fragment = fragments[#fragments]
-    local last_meta = last_fragment and VIRTUAL_SYMBOLS[last_fragment]
-    if last_meta == VIRTUAL_ITEMS.RECENT then
-        table.remove(fragments)
-        local recents = self:listRecentFilters(collate)
-        for _, ritem in ipairs(recents) do
-            table.insert(dirs, ritem)
-        end
-        return dirs, files
-    end
-
     -- We have arguments
     local meta_name
     local filters = {}
@@ -441,7 +315,7 @@ function FileChooser:getVirtualList(path, collate)
         local fragment = table.remove(fragments)
         local meta = VIRTUAL_SYMBOLS[fragment]
         if meta then
-            if meta == VIRTUAL_ITEMS.ROOT or meta == VIRTUAL_ITEMS.TITLE then
+            if meta == VIRTUAL_ITEMS.ROOT then
                 do end -- do nothing
             else
                 local db_meta_name = meta.db_column
@@ -461,9 +335,6 @@ function FileChooser:getVirtualList(path, collate)
                 cur_value = false -- NULL
             end
         end
-    end
-    if meta_name == "title" then
-        meta_name = nil
     end
     if meta_name then
         local matching_values = self.ui.coverbrowser:getMatchingMetadataValues(base_dir, meta_name, filters)
@@ -508,12 +379,6 @@ end
 -- Patch FileChooser:genItemTableFromPath()
 local FileChooser_genItemTableFromPath = FileChooser.genItemTableFromPath
 FileChooser.genItemTableFromPath = function (self, path)
-    -- If final-level folder => record as recent
-    local vtype = self:getVirtualPathTypePath(path)
-    if vtype == VIRTUAL_PATH_TYPE_MATCHING_FILES then
-        addRecentFilter(path)
-    end
-
     if self:getVirtualPathTypePath(path) then
         local collate = self:getCollate()
         local dirs, files = self:getVirtualList(path, collate)
@@ -532,10 +397,6 @@ FileChooser.genItemTable = function (self, dirs, files, path)
 
 
     local virtual_path_type = self:getVirtualPathTypePath(path)
-    local _, last_part = util.splitFilePathName(path)
-
-    local is_recent_virtual = virtual_path_type == VIRTUAL_PATH_TYPE_META_VALUES_LIST
-        and VIRTUAL_SYMBOLS[last_part] == VIRTUAL_ITEMS.RECENT
 
     -- TODO: somehow force collate to "size" for virtual directories
     -- if virtual_path_type == VIRTUAL_PATH_TYPE_ROOT then
@@ -547,35 +408,14 @@ FileChooser.genItemTable = function (self, dirs, files, path)
     local up_path = path:gsub("(/[^/]+)$", "")
     local item_table
 
-    if is_recent_virtual then
-        -- Manually preserve order and insert custom ".."
-        item_table = {
-            {
-                text = "\u{2B06} ..", -- add up arrow explicitly
-                path = up_path,
-                is_directory = true,
-            }
-        }
-        for _, d in ipairs(dirs) do table.insert(item_table, d) end
-    else
-        item_table = FileChooser_genItemTable(self, dirs, files, path)
+    item_table = FileChooser_genItemTable(self, dirs, files, path)
 
-        if item_table[1] and item_table[1].path:find("/..$") then
-            item_table[1].path = virtual_path_type ~= nil and up_path or path.."/.."
-        end
+    if item_table[1] and item_table[1].path:find("/..$") then
+        item_table[1].path = virtual_path_type ~= nil and up_path or path.."/.."
     end
 
     if shouldHideVirtualUpArrow(self, path) and item_table[1] and item_table[1].path == up_path then
         table.remove(item_table, 1)
-    end
-
-    if self.name == "filemanager" -- do not show in PathChooser
-            and self.ui.coverbrowser and path and virtual_path_type == nil then
-        table.insert(item_table, 1, {
-            --text = "\u{EA30} browse by metadata \u{EA30} \u{E7F5} \u{E7FC} \u{e8d5} \u{eec3} \u{e93a} \u{e92f} \u{e9c4} \u{ed49} \u{ea27} \u{edf8} \u{ebfa} \u{ebf8} \u{ebfc} \u{ec66} \u{ec68} \u{ec6d} \u{ec9e}",
-            text = VIRTUAL_ROOT_SYMBOL .. " " .. (virtual_path_type and VIRTUAL_ITEMS.ROOT.filter_text or VIRTUAL_ITEMS.ROOT.browse_text),
-            path = path.."/"..VIRTUAL_ROOT_SYMBOL,
-        })
     end
 
     return item_table
@@ -634,8 +474,8 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             local name, value = filter[1], filter[2]
             if value == false then
                 sql = T("%1 and %2 is NULL", sql, name)
-            elseif name == "authors" or name == "keywords" then
-                -- authors and keywords may have multiple values, separated by \n
+            elseif name == "authors" then
+                -- authors may have multiple values, separated by \n
                 sql = T("%1 and '\n'||%2||'\n' GLOB ?", sql, name)
                 table.insert(vars, "*\n"..value.."\n*")
             else
@@ -655,7 +495,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         stmt:bind(table.unpack(vars))
         local results = {}
         local xresults = {}
-        local use_results_as_is = meta_name ~= "authors" and meta_name ~= "keywords"
+        local use_results_as_is = meta_name ~= "authors"
         while true do
             local row = stmt:step()
             if not row then
@@ -664,7 +504,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             if use_results_as_is then
                 table.insert(results, {row[1] or false, tonumber(row[2])})
             else
-                -- authors and keywords may have multiple values, separated by \n
+                -- authors may have multiple values, separated by \n
                 local value, nb = row[1] or false, tonumber(row[2])
                 if value and value:find("\n") then
                     for val in util.gsplit(value, "\n") do
@@ -695,8 +535,8 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             local name, value = filter[1], filter[2]
             if value == false then
                 sql = T("%1 and %2 is NULL", sql, name)
-            elseif name == "authors" or name == "keywords" then
-                -- authors and keywords may have multiple values, separated by \n
+            elseif name == "authors" then
+                -- authors may have multiple values, separated by \n
                 sql = T("%1 and '\n'||%2||'\n' GLOB ?", sql, name)
                 table.insert(vars, "*\n"..value.."\n*")
             else

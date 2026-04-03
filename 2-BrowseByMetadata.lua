@@ -70,6 +70,25 @@ local VIRTUAL_PATH_TYPE_ROOT = "VIRTUAL_PATH_TYPE_ROOT"
 local VIRTUAL_PATH_TYPE_META_VALUES_LIST = "VIRTUAL_PATH_TYPE_META_VALUES_LIST"
 local VIRTUAL_PATH_TYPE_MATCHING_FILES = "VIRTUAL_PATH_TYPE_MATCHING_FILES"
 local representative_file_cache = {}
+local virtual_metadata_values_cache = {}
+local virtual_matching_files_cache = {}
+local virtual_cache_base_dir
+
+local function clearVirtualCaches()
+    representative_file_cache = {}
+    virtual_metadata_values_cache = {}
+    virtual_matching_files_cache = {}
+end
+
+local function ensureVirtualCacheBaseDir(base_dir)
+    if not base_dir then
+        return
+    end
+    if virtual_cache_base_dir ~= base_dir then
+        clearVirtualCaches()
+        virtual_cache_base_dir = base_dir
+    end
+end
 
 local function findVirtualRoot(path)
     if not path then
@@ -346,6 +365,7 @@ function FileChooser:getVirtualList(path, collate)
     if not virtual_root then
         return dirs, files
     end
+    ensureVirtualCacheBaseDir(base_dir)
     local fragments = {}
     for fragment in util.gsplit(virtual_path, "/") do
         -- XXX issue if / in metadata content (Frank Thilliez keywords
@@ -407,8 +427,12 @@ function FileChooser:getVirtualList(path, collate)
         end
     end
     if meta_name then
-        local matching_values = self.ui.coverbrowser:getMatchingMetadataValues(base_dir, meta_name, filters)
-        sortVirtualMetadataValues(matching_values)
+        local matching_values = virtual_metadata_values_cache[path]
+        if not matching_values then
+            matching_values = self.ui.coverbrowser:getMatchingMetadataValues(base_dir, meta_name, filters)
+            sortVirtualMetadataValues(matching_values)
+            virtual_metadata_values_cache[path] = matching_values
+        end
         for i, v in ipairs(matching_values) do
             -- Ignore those already present in the current filters
             if not filters_seen[meta_name] or not filters_seen[meta_name][v[1]] then
@@ -434,8 +458,12 @@ function FileChooser:getVirtualList(path, collate)
             end
         end
     else
-        local matching_files = self.ui.coverbrowser:getMatchingFiles(base_dir, filters)
-        sortVirtualMatchingFiles(matching_files, getVirtualLeafSortMode(filters))
+        local matching_files = virtual_matching_files_cache[path]
+        if not matching_files then
+            matching_files = self.ui.coverbrowser:getMatchingFiles(base_dir, filters)
+            sortVirtualMatchingFiles(matching_files, getVirtualLeafSortMode(filters))
+            virtual_matching_files_cache[path] = matching_files
+        end
         for i, v in ipairs(matching_files) do
             local fullpath, f = unpack(v)
             local attributes = lfs.attributes(fullpath)
@@ -689,7 +717,13 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             return nil
         end
 
-        local matching_files = BookInfoManager:getMatchingFiles(base_dir, filters, 1)
+        ensureVirtualCacheBaseDir(base_dir)
+        local matching_files = virtual_matching_files_cache[path]
+        if not matching_files then
+            matching_files = BookInfoManager:getMatchingFiles(base_dir, filters)
+            sortVirtualMatchingFiles(matching_files, getVirtualLeafSortMode(filters))
+            virtual_matching_files_cache[path] = matching_files
+        end
         local filepath = matching_files[1] and matching_files[1][1] or false
         representative_file_cache[path] = filepath
         return filepath or nil

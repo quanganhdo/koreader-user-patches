@@ -484,8 +484,8 @@ function FileChooser:getVirtualList(path, collate)
                 item.mandatory = self:getMenuItemMandatory(item)
                 local representative_path = self.ui and self.ui.coverbrowser and self.ui.coverbrowser:getRepresentativeFilepath(this_path)
                 if representative_path then
-                    item.file = representative_path
-                    item.is_file = true
+                    item.is_virtual_metadata_leaf = true
+                    item.representative_filepath = representative_path
                 end
                 table.insert(dirs, item)
             end
@@ -607,6 +607,10 @@ end
 
 userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
     local BookInfoManager = require("bookinfomanager")
+    local MosaicMenu = require("mosaicmenu")
+    local MosaicMenuItem = userpatch.getUpValue(MosaicMenu._updateItemsBuildUI, "MosaicMenuItem")
+    local ListMenu = require("listmenu")
+    local ListMenuItem = userpatch.getUpValue(ListMenu._updateItemsBuildUI, "ListMenuItem")
 
     -- Add BookInfoManager:getMatchingMetadataValues()
     function BookInfoManager:getMatchingMetadataValues(base_dir, meta_name, filters)
@@ -734,6 +738,35 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         local filepath = matching_files[1] and matching_files[1][1] or false
         representative_file_cache[path] = filepath
         return filepath or nil
+    end
+
+    local function withRepresentativeFileEntry(item, update_func, ...)
+        if not item.entry or not item.entry.is_virtual_metadata_leaf or not item.entry.representative_filepath then
+            return update_func(item, ...)
+        end
+
+        local original_entry_file = item.entry.file
+        local original_entry_is_file = item.entry.is_file
+        item.entry.file = item.entry.representative_filepath
+        item.entry.is_file = true
+        item.filepath = item.entry.representative_filepath
+        item.is_virtual_metadata_leaf = true
+
+        local results = table.pack(update_func(item, ...))
+
+        item.entry.file = original_entry_file
+        item.entry.is_file = original_entry_is_file
+        return table.unpack(results, 1, results.n)
+    end
+
+    local MosaicMenuItem_update = MosaicMenuItem.update
+    function MosaicMenuItem:update(...)
+        return withRepresentativeFileEntry(self, MosaicMenuItem_update, ...)
+    end
+
+    local ListMenuItem_update = ListMenuItem.update
+    function ListMenuItem:update(...)
+        return withRepresentativeFileEntry(self, ListMenuItem_update, ...)
     end
 end)
 

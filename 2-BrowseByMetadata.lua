@@ -15,6 +15,7 @@
 local userpatch = require("userpatch")
 local ffiUtil = require("ffi/util")
 local util = require("util")
+local Dispatcher = require("dispatcher")
 local _ = require("gettext")
 local T = ffiUtil.template
 
@@ -105,13 +106,13 @@ local VIRTUAL_ITEMS = {
         -- symbol = "\u{f03d}",
         -- symbol = "\u{f447}",
     },
-    --[[LANGUAGE = {
+    LANGUAGE = {
         browse_text = _("Browse by language"),
         filter_text = _("Filter by language"),
         db_column = "language",
         symbol = "\u{f0e5}",
         -- symbol = "\u{ec9e}",
-    },--]]
+    },
     KEYWORD = {
         browse_text = _("Browse by keyword"),
         filter_text = _("Filter by keyword"),
@@ -133,7 +134,7 @@ local VIRTUAL_SUBITEMS_ORDERED = {
     VIRTUAL_ITEMS.TITLE,
     VIRTUAL_ITEMS.AUTHOR,
     VIRTUAL_ITEMS.SERIES,
-    --VIRTUAL_ITEMS.LANGUAGE,
+    VIRTUAL_ITEMS.LANGUAGE,
     VIRTUAL_ITEMS.KEYWORD,
 }
 local VIRTUAL_ROOT_SYMBOL = VIRTUAL_ITEMS.ROOT.symbol
@@ -145,6 +146,38 @@ end
 local VIRTUAL_PATH_TYPE_ROOT = "VIRTUAL_PATH_TYPE_ROOT"
 local VIRTUAL_PATH_TYPE_META_VALUES_LIST = "VIRTUAL_PATH_TYPE_META_VALUES_LIST"
 local VIRTUAL_PATH_TYPE_MATCHING_FILES = "VIRTUAL_PATH_TYPE_MATCHING_FILES"
+
+local function getVirtualBaseDir(path)
+    if not path then
+        return
+    end
+    local base_dir = path:match("(.-)/" .. VIRTUAL_ROOT_SYMBOL)
+    return base_dir or path
+end
+
+local function getVirtualBrowsePath(base_dir, item)
+    if not base_dir or not item then
+        return
+    end
+    return string.format("%s/%s/%s", base_dir, VIRTUAL_ROOT_SYMBOL, item.symbol)
+end
+
+local function registerBrowseAction(action_name, arg, title)
+    Dispatcher:registerAction(action_name, {
+        category = "none",
+        event = "BrowseByMetadata",
+        arg = arg,
+        title = title,
+        filemanager = true,
+    })
+end
+
+registerBrowseAction("browse_by_metadata_root", "root", _("Browse by metadata"))
+registerBrowseAction("browse_by_metadata_title", "title", _("Browse by title"))
+registerBrowseAction("browse_by_metadata_author", "author", _("Browse by author"))
+registerBrowseAction("browse_by_metadata_series", "series", _("Browse by series"))
+registerBrowseAction("browse_by_metadata_language", "language", _("Browse by language"))
+registerBrowseAction("browse_by_metadata_keyword", "keyword", _("Browse by keyword"))
 
 -- Patch FileManager:setupLayout()
 local FileManager_setupLayout = FileManager.setupLayout
@@ -163,6 +196,32 @@ FileManager.setupLayout = function (self)
         end
 
         return file_chooser_showFileDialog(self, item)
+    end
+end
+
+function FileManager:onBrowseByMetadata(kind)
+    local item
+    if kind == "root" then
+        item = VIRTUAL_ITEMS.ROOT
+    elseif kind == "title" then
+        item = VIRTUAL_ITEMS.TITLE
+    elseif kind == "author" then
+        item = VIRTUAL_ITEMS.AUTHOR
+    elseif kind == "series" then
+        item = VIRTUAL_ITEMS.SERIES
+    elseif kind == "language" then
+        item = VIRTUAL_ITEMS.LANGUAGE
+    elseif kind == "keyword" then
+        item = VIRTUAL_ITEMS.KEYWORD
+    else
+        return
+    end
+
+    local current_path = self.file_chooser and self.file_chooser.path or self.root_path
+    local base_dir = getVirtualBaseDir(current_path)
+    local target_path = getVirtualBrowsePath(base_dir, item)
+    if target_path then
+        self.file_chooser:changeToPath(target_path)
     end
 end
 
@@ -290,28 +349,10 @@ function FileChooser:getVirtualList(path, collate)
         meta_name = nil
     end
     if meta_name then
-      local matching_values = self.ui.coverbrowser:getMatchingMetadataValues(base_dir, meta_name, filters)
-
+        local matching_values = self.ui.coverbrowser:getMatchingMetadataValues(base_dir, meta_name, filters)
         for i, v in ipairs(matching_values) do
-            local value, count = v[1], v[2]
-
-            -- Skip invalid metadata (ALL filters)
-            if not value or value == "" then
-                goto continue
-            end
-
-            -- Skip series with 1 or fewer books
-            if meta_name == "series" and count <= 1 then
-                goto continue
-            end
-
-            -- Skip keywords with less than 3 books
-            if meta_name == "keywords" and count < 3 then
-                goto continue
-            end
-
             -- Ignore those already present in the current filters
-            if not filters_seen[meta_name] or not filters_seen[meta_name][value] then
+            if not filters_seen[meta_name] or not filters_seen[meta_name][v[1]] then
                 local fake_attributes = {
                     mode = "directory",
                     modification = 0,
@@ -319,35 +360,23 @@ function FileChooser:getVirtualList(path, collate)
                     change = 0,
                     size = i,
                 }
-
-                local name = value
-                local this_path = path .. "/" .. value
-                local item = self:getListItem(nil, name, this_path, fake_attributes, collate)
-
-                item.nb_sub_files = count
+                local name = v[1] or "\u{2205}"
+                local this_path = path.."/"..(v[1] or "\u{2205}")
+                item = self:getListItem(nil, name, this_path, fake_attributes, collate)
+                item.nb_sub_files = v[2]
                 item.mandatory = self:getMenuItemMandatory(item)
                 table.insert(dirs, item)
             end
-
-            ::continue::
         end
-
     else
         local matching_files = self.ui.coverbrowser:getMatchingFiles(base_dir, filters)
         for i, v in ipairs(matching_files) do
             local fullpath, f = unpack(v)
-            
-            --Filter out anything that is not a book. Allows: epub, pdf and mobi.
-            local ext = f:lower():match("%.([a-z0-9]+)$")
-            if ext ~= "pdf" and ext ~= "epub" and ext ~= "mobi" then
-                 goto continue
-            end
             local attributes = lfs.attributes(fullpath)
             if attributes and attributes.mode == "file" and self:show_file(f, fullpath) then
                 local item = self:getListItem(path, f, fullpath, attributes, collate)
                 table.insert(files, item)
             end
-            ::continue::
         end
     end
     return dirs, files
@@ -419,7 +448,6 @@ FileChooser.genItemTable = function (self, dirs, files, path)
             --text = "\u{EA30} browse by metadata \u{EA30} \u{E7F5} \u{E7FC} \u{e8d5} \u{eec3} \u{e93a} \u{e92f} \u{e9c4} \u{ed49} \u{ea27} \u{edf8} \u{ebfa} \u{ebf8} \u{ebfc} \u{ec66} \u{ec68} \u{ec6d} \u{ec9e}",
             text = VIRTUAL_ROOT_SYMBOL .. " " .. (virtual_path_type and VIRTUAL_ITEMS.ROOT.filter_text or VIRTUAL_ITEMS.ROOT.browse_text),
             path = path.."/"..VIRTUAL_ROOT_SYMBOL,
-            is_directory = true,
         })
     end
 
@@ -476,9 +504,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
                 table.insert(vars, value)
             end
         end
-        -- sql = T("%1 group by %2", sql, meta_name)
-        sql = T("%1 and %2 is not NULL and trim(%2) != '' group by %2", sql, meta_name) -- SKIP null values, also uncomment 313/314 lines (314 fix "( part.
-
+        sql = T("%1 group by %2", sql, meta_name)
             -- We might want to "group by" in a somehow case insentive manner,
             -- but we would need to pick one of the variously cased values to
             -- be returned and display, but which?

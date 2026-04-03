@@ -236,19 +236,30 @@ local function getVirtualSubtitle(path)
         return
     end
 
+    local _dir, last_part = util.splitFilePathName(path)
+    local _base_dir, meta_name, filters = parseVirtualPath(path)
     local labels = {
-        [VIRTUAL_ITEMS.AUTHOR.symbol] = _("Authors"),
-        [VIRTUAL_ITEMS.SERIES.symbol] = _("Series"),
-        [VIRTUAL_ITEMS.LANGUAGE.symbol] = _("Languages"),
-        [VIRTUAL_ITEMS.KEYWORD.symbol] = _("Keywords"),
+        authors = _("Authors"),
+        series = _("Series"),
+        language = _("Languages"),
+        keywords = _("Keywords"),
     }
 
-    for fragment in util.gsplit(path, "/") do
-        local label = labels[fragment]
-        if label then
-            return label
+    if filters and #filters > 0 then
+        local value = filters[1][2]
+        if value == false then
+            return "\u{2205}"
+        end
+        if type(value) == "string" and value ~= "" then
+            return value
         end
     end
+
+    if meta_name then
+        return labels[meta_name]
+    end
+
+    return labels[last_part]
 end
 
 local function registerBrowseAction(action_name, arg, title)
@@ -558,7 +569,7 @@ FileChooser.genItemTable = function (self, dirs, files, path)
     end
 
     if self.name == "filemanager" -- do not show in PathChooser
-            and self.ui.coverbrowser and path and (virtual_path_type == nil or virtual_path_type == VIRTUAL_PATH_TYPE_MATCHING_FILES) then
+            and self.ui.coverbrowser and path and virtual_path_type == nil then
         table.insert(item_table, 1, {
             --text = "\u{EA30} browse by metadata \u{EA30} \u{E7F5} \u{E7FC} \u{e8d5} \u{eec3} \u{e93a} \u{e92f} \u{e9c4} \u{ed49} \u{ea27} \u{edf8} \u{ebfa} \u{ebf8} \u{ebfc} \u{ec66} \u{ec68} \u{ec6d} \u{ec9e}",
             text = VIRTUAL_ROOT_SYMBOL .. " " .. (virtual_path_type and VIRTUAL_ITEMS.ROOT.filter_text or VIRTUAL_ITEMS.ROOT.browse_text),

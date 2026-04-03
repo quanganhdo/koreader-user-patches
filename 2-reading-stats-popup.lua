@@ -2,7 +2,7 @@
 Reading Stats Popup - Kobo-style reading statistics overlay
 Shows: This Chapter (time left), Next Chapter (time), This Book (progress, pages read, time spent/left),
        Pace (avg time/day, pages/minute), Days (reading/to go)
-Version: 1.0.2
+Version: 1.0.3
 Updates: https://github.com/quanganhdo/koreader-user-patches
 ]]--
 

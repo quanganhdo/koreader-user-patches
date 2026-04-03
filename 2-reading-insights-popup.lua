@@ -5,7 +5,7 @@ Controls: Any key to dismiss; Prev/Next to navigate years; Center D-pad to toggl
 Tap left yearly value to switch days/hours
 Tap right yearly value or monthly bars to open book list
 Tap monthly header to switch days/hours
-Version: 1.0.2
+Version: 1.0.3
 Updates: https://github.com/quanganhdo/koreader-user-patches
 ]]--
 

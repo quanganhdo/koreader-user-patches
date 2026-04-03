@@ -1,3 +1,6 @@
+-- File browser reading percentage badge
+-- Version: 1.0.3
+-- Updates: https://github.com/quanganhdo/koreader-user-patches
 local userpatch = require("userpatch")
 
 userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)

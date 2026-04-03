@@ -1,10 +1,16 @@
--- BrowseByMetadata userpatch
+-- Author/Series browser userpatch
+-- Version: 1.0.3
+-- Updates: https://github.com/quanganhdo/koreader-user-patches
 -- 
--- This is poire-z's BrowseByMetadata proof of concept from https://github.com/koreader/koreader/issues/8472 converted into a userpatch
--- Based on code from https://github.com/poire-z/koreader/commit/ad03650b5d7e19a8de45857c83a2d7a4c7e13a4a
+-- Adapted from medinauta's user patch:
+-- https://github.com/medinauta/Koreader-Patches/blob/main/2-BrowseByMetadata.lua
+--
+-- That patch is itself inspired by poire-z's BrowseByMetadata proof of concept:
+-- https://github.com/koreader/koreader/issues/8472
+-- https://github.com/poire-z/koreader/commit/ad03650b5d7e19a8de45857c83a2d7a4c7e13a4a
 -- 
 -- Regressions/changes in userpatch version:
--- * collate (sort) is not overridden, so the sort in the metadata menu is no longer forced to sort by size in BrowseByMetadata menus
+-- * collate (sort) is not overridden, so the sort in the metadata menu is no longer forced to sort by size
 -- * is_directory is not set to true in ListMenuItem:update() and MosaicMenuItem:update()
 --   * I don't know what effect this was supposed to have, possibly change the display? It seems like it may already evaluate to true
 -- * removed unused item.nb_sub_dirs display formatting

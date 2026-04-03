@@ -2,6 +2,8 @@
 
 Some of my personal user patches to add extra bells and whistles to your KOReader experience.
 
+Current version: `1.0.3`
+
 ## Installation
 
 1. Make sure you have the `Reading statistics` plugin enabled in `Plugin management`.
@@ -24,6 +26,15 @@ Recommended `Status bar items` settings:
 Screenshot:
 <br>
 <img src="resources/chapter-time-format.png" width="320px" alt="Chapter time format in footer">
+
+### `2-author-series.lua`
+
+Adds gesture-driven virtual folders for browsing the library by `Author` and `Series`, with representative covers for each leaf folder.
+Assign gestures via `Gesture Manager` to trigger `File browser > Browse by author` and `File browser > Browse by series`.
+
+### `2-reading-percentage.lua`
+
+Replaces the file browser dog-ear with a top-right reading percentage badge for in-progress books in mosaic mode.
 
 ### `2-reading-insights-popup.lua`
 

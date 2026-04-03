@@ -14,6 +14,7 @@
 
 local userpatch = require("userpatch")
 local ffiUtil = require("ffi/util")
+local lfs = require("libs/libkoreader-lfs")
 local util = require("util")
 local Dispatcher = require("dispatcher")
 local _ = require("gettext")
@@ -146,13 +147,77 @@ end
 local VIRTUAL_PATH_TYPE_ROOT = "VIRTUAL_PATH_TYPE_ROOT"
 local VIRTUAL_PATH_TYPE_META_VALUES_LIST = "VIRTUAL_PATH_TYPE_META_VALUES_LIST"
 local VIRTUAL_PATH_TYPE_MATCHING_FILES = "VIRTUAL_PATH_TYPE_MATCHING_FILES"
+local representative_file_cache = {}
+
+local function findVirtualRoot(path)
+    if not path then
+        return
+    end
+    return path:find("/" .. VIRTUAL_ROOT_SYMBOL, 1, true)
+end
+
+local function parseVirtualPath(path)
+    local root_start, root_end = findVirtualRoot(path)
+    if not root_start then
+        return
+    end
+    local base_dir = path:sub(1, root_start - 1)
+    local virtual_path = path:sub(root_end + 1)
+
+    local fragments = {}
+    for fragment in util.gsplit(virtual_path, "/") do
+        if fragment ~= "" then
+            table.insert(fragments, fragment)
+        end
+    end
+
+    local meta_name
+    local filters = {}
+    local filters_seen = {}
+    local cur_value
+    while #fragments > 0 do
+        local fragment = table.remove(fragments)
+        local meta = VIRTUAL_SYMBOLS[fragment]
+        if meta then
+            if meta == VIRTUAL_ITEMS.ROOT or meta == VIRTUAL_ITEMS.TITLE then
+                do end
+            elseif meta == VIRTUAL_ITEMS.RECENT then
+                return
+            else
+                local db_meta_name = meta.db_column
+                if cur_value ~= nil then
+                    table.insert(filters, { db_meta_name, cur_value })
+                    if not filters_seen[db_meta_name] then
+                        filters_seen[db_meta_name] = {}
+                    end
+                    filters_seen[db_meta_name][cur_value] = true
+                else
+                    meta_name = db_meta_name
+                end
+            end
+        else
+            cur_value = fragment
+            if cur_value == "\u{2205}" then
+                cur_value = false
+            end
+        end
+    end
+
+    if meta_name == "title" then
+        meta_name = nil
+    end
+    return base_dir, meta_name, filters, filters_seen
+end
 
 local function getVirtualBaseDir(path)
     if not path then
         return
     end
-    local base_dir = path:match("(.-)/" .. VIRTUAL_ROOT_SYMBOL)
-    return base_dir or path
+    local root_start = findVirtualRoot(path)
+    if root_start then
+        return path:sub(1, root_start - 1)
+    end
+    return path
 end
 
 local function getVirtualBrowsePath(base_dir, item)
@@ -167,7 +232,7 @@ local function shouldHideVirtualUpArrow(self, path)
 end
 
 local function getVirtualSubtitle(path)
-    if not path or not path:find("/" .. VIRTUAL_ROOT_SYMBOL .. "/") then
+    if not path or not path:find("/" .. VIRTUAL_ROOT_SYMBOL .. "/", 1, true) then
         return
     end
 
@@ -232,6 +297,15 @@ FileManager.updateTitleBarPath = function(self, path)
 end
 FileManager.onPathChanged = FileManager.updateTitleBarPath
 
+local FileChooser_onMenuSelect = FileChooser.onMenuSelect
+FileChooser.onMenuSelect = function(self, item)
+    if item and item.path and self:getVirtualPathTypePath(item.path) then
+        self:changeToPath(item.path, item.is_go_up and self.path)
+        return true
+    end
+    return FileChooser_onMenuSelect(self, item)
+end
+
 function FileManager:onBrowseByMetadata(kind)
     local item
     if kind == "author" then
@@ -259,21 +333,23 @@ end
 function FileChooser:getVirtualPathTypePath(path)
     path = path or self.path
     if not path then return end
-    if path:find("/"..VIRTUAL_ROOT_SYMBOL.."$") then
+    local root_start, root_end = findVirtualRoot(path)
+    if not root_start then
+        return
+    end
+    if root_end == #path then
         return VIRTUAL_PATH_TYPE_ROOT
     end
-    if path:find("/"..VIRTUAL_ROOT_SYMBOL.."/") then
-        local _, last_part = util.splitFilePathName(path)
-        local symbol = VIRTUAL_SYMBOLS[last_part]
-        if symbol then
-            if symbol == VIRTUAL_ITEMS.ROOT then
-                return VIRTUAL_PATH_TYPE_ROOT
-            elseif symbol ~= VIRTUAL_ITEMS.TITLE then
-                return VIRTUAL_PATH_TYPE_META_VALUES_LIST
-            end
+    local _, last_part = util.splitFilePathName(path)
+    local symbol = VIRTUAL_SYMBOLS[last_part]
+    if symbol then
+        if symbol == VIRTUAL_ITEMS.ROOT then
+            return VIRTUAL_PATH_TYPE_ROOT
+        elseif symbol ~= VIRTUAL_ITEMS.TITLE then
+            return VIRTUAL_PATH_TYPE_META_VALUES_LIST
         end
-        return VIRTUAL_PATH_TYPE_MATCHING_FILES
     end
+    return VIRTUAL_PATH_TYPE_MATCHING_FILES
 end
 
 function FileChooser:listRecentFilters(collate)
@@ -395,6 +471,11 @@ function FileChooser:getVirtualList(path, collate)
                 item = self:getListItem(nil, name, this_path, fake_attributes, collate)
                 item.nb_sub_files = v[2]
                 item.mandatory = self:getMenuItemMandatory(item)
+                local representative_path = self.ui and self.ui.coverbrowser and self.ui.coverbrowser:getRepresentativeFilepath(this_path)
+                if representative_path then
+                    item.file = representative_path
+                    item.is_file = true
+                end
                 table.insert(dirs, item)
             end
         end
@@ -515,8 +596,6 @@ end
 
 userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
     local BookInfoManager = require("bookinfomanager")
-    local MosaicMenu = require("mosaicmenu")
-    local ListMenu = require("listmenu")
 
     -- Add BookInfoManager:getMatchingMetadataValues()
     function BookInfoManager:getMatchingMetadataValues(base_dir, meta_name, filters)
@@ -579,7 +658,10 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
     end
 
     -- Add BookInfoManager:getMatchingFiles()
-    function BookInfoManager:getMatchingFiles(base_dir, filters)
+    function BookInfoManager:getMatchingFiles(base_dir, filters, limit)
+        if not base_dir then
+            return {}
+        end
         local vars = {}
         local sql = "select directory||filename, filename from bookinfo where directory glob ?"
         table.insert(vars, base_dir..'/*')
@@ -595,6 +677,10 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
                 sql = T("%1 and %2=?", sql, name)
                 table.insert(vars, value)
             end
+        end
+        sql = sql .. " order by directory asc, filename asc"
+        if limit then
+            sql = sql .. " limit " .. tonumber(limit)
         end
         -- logger.warn(sql, vars)
         self:openDbConnection()
@@ -622,7 +708,22 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         return BookInfoManager:getMatchingFiles(base_dir, filters)
     end
 
-    -- TODO: restore patches to set is_directory in ListMenuItem:update() and MosaicMenuItem:update()
+    function CoverBrowser:getRepresentativeFilepath(path)
+        if representative_file_cache[path] ~= nil then
+            return representative_file_cache[path] or nil
+        end
+
+        local base_dir, meta_name, filters = parseVirtualPath(path)
+        if not base_dir or meta_name ~= nil or not filters or #filters == 0 then
+            representative_file_cache[path] = false
+            return nil
+        end
+
+        local matching_files = BookInfoManager:getMatchingFiles(base_dir, filters, 1)
+        local filepath = matching_files[1] and matching_files[1][1] or false
+        representative_file_cache[path] = filepath
+        return filepath or nil
+    end
 end)
 
 -- disable 'New folder' action in virtual folders

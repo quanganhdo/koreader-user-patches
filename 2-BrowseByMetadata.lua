@@ -162,6 +162,30 @@ local function getVirtualBrowsePath(base_dir, item)
     return string.format("%s/%s/%s", base_dir, VIRTUAL_ROOT_SYMBOL, item.symbol)
 end
 
+local function shouldHideVirtualUpArrow(self, path)
+    return self and self._browse_by_metadata_entry_path == path
+end
+
+local function getVirtualSubtitle(path)
+    if not path or not path:find("/" .. VIRTUAL_ROOT_SYMBOL .. "/") then
+        return
+    end
+
+    local labels = {
+        [VIRTUAL_ITEMS.AUTHOR.symbol] = _("Authors"),
+        [VIRTUAL_ITEMS.SERIES.symbol] = _("Series"),
+        [VIRTUAL_ITEMS.LANGUAGE.symbol] = _("Languages"),
+        [VIRTUAL_ITEMS.KEYWORD.symbol] = _("Keywords"),
+    }
+
+    for fragment in util.gsplit(path, "/") do
+        local label = labels[fragment]
+        if label then
+            return label
+        end
+    end
+end
+
 local function registerBrowseAction(action_name, arg, title)
     Dispatcher:registerAction(action_name, {
         category = "none",
@@ -172,8 +196,6 @@ local function registerBrowseAction(action_name, arg, title)
     })
 end
 
-registerBrowseAction("browse_by_metadata_root", "root", _("Browse by metadata"))
-registerBrowseAction("browse_by_metadata_title", "title", _("Browse by title"))
 registerBrowseAction("browse_by_metadata_author", "author", _("Browse by author"))
 registerBrowseAction("browse_by_metadata_series", "series", _("Browse by series"))
 registerBrowseAction("browse_by_metadata_language", "language", _("Browse by language"))
@@ -199,13 +221,20 @@ FileManager.setupLayout = function (self)
     end
 end
 
+local FileManager_updateTitleBarPath = FileManager.updateTitleBarPath
+FileManager.updateTitleBarPath = function(self, path)
+    local subtitle = getVirtualSubtitle(path)
+    if subtitle then
+        self.title_bar:setSubTitle(subtitle)
+        return
+    end
+    return FileManager_updateTitleBarPath(self, path)
+end
+FileManager.onPathChanged = FileManager.updateTitleBarPath
+
 function FileManager:onBrowseByMetadata(kind)
     local item
-    if kind == "root" then
-        item = VIRTUAL_ITEMS.ROOT
-    elseif kind == "title" then
-        item = VIRTUAL_ITEMS.TITLE
-    elseif kind == "author" then
+    if kind == "author" then
         item = VIRTUAL_ITEMS.AUTHOR
     elseif kind == "series" then
         item = VIRTUAL_ITEMS.SERIES
@@ -221,6 +250,7 @@ function FileManager:onBrowseByMetadata(kind)
     local base_dir = getVirtualBaseDir(current_path)
     local target_path = getVirtualBrowsePath(base_dir, item)
     if target_path then
+        self.file_chooser._browse_by_metadata_entry_path = target_path
         self.file_chooser:changeToPath(target_path)
     end
 end
@@ -440,6 +470,10 @@ FileChooser.genItemTable = function (self, dirs, files, path)
         if item_table[1] and item_table[1].path:find("/..$") then
             item_table[1].path = virtual_path_type ~= nil and up_path or path.."/.."
         end
+    end
+
+    if shouldHideVirtualUpArrow(self, path) and item_table[1] and item_table[1].path == up_path then
+        table.remove(item_table, 1)
     end
 
     if self.name == "filemanager" -- do not show in PathChooser

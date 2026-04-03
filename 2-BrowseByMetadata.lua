@@ -12,10 +12,12 @@
 -- * added fallback in genItemTable() to support file search results with nil path
 
 local userpatch = require("userpatch")
+local ffi = require("ffi")
 local ffiUtil = require("ffi/util")
 local lfs = require("libs/libkoreader-lfs")
 local util = require("util")
 local Dispatcher = require("dispatcher")
+local BD = require("ui/bidi")
 local _ = require("gettext")
 local T = ffiUtil.template
 
@@ -139,6 +141,74 @@ local function getVirtualBrowsePath(base_dir, item)
         return
     end
     return string.format("%s/%s/%s", base_dir, VIRTUAL_ROOT_SYMBOL, item.symbol)
+end
+
+local function virtualTextLess(a, b)
+    if a == b then
+        return false
+    elseif a == nil or a == false or a == "" then
+        return false
+    elseif b == nil or b == false or b == "" then
+        return true
+    end
+    return ffiUtil.strcoll(a, b)
+end
+
+local function sortVirtualMetadataValues(values)
+    table.sort(values, function(a, b)
+        local av = a[1]
+        local bv = b[1]
+        if av == bv then
+            return (a[2] or 0) < (b[2] or 0)
+        end
+        return virtualTextLess(av, bv)
+    end)
+end
+
+local function getVirtualLeafSortMode(filters)
+    if not filters or #filters == 0 then
+        return
+    end
+    local first_filter = filters[1] and filters[1][1]
+    if first_filter == "authors" then
+        return "author"
+    elseif first_filter == "series" then
+        return "series"
+    end
+end
+
+local function sortVirtualMatchingFiles(matching_files, sort_mode)
+    if not sort_mode then
+        return
+    end
+    table.sort(matching_files, function(a, b)
+        if sort_mode == "author" then
+            local a_series = a.series
+            local b_series = b.series
+            if a_series ~= b_series then
+                return virtualTextLess(a_series, b_series)
+            end
+        end
+
+        local a_index = a.series_index
+        local b_index = b.series_index
+        if a_index ~= b_index then
+            if a_index == nil then
+                return false
+            elseif b_index == nil then
+                return true
+            end
+            return a_index < b_index
+        end
+
+        local a_title = a.title or a[2]
+        local b_title = b.title or b[2]
+        if a_title ~= b_title then
+            return virtualTextLess(a_title, b_title)
+        end
+
+        return virtualTextLess(a[2], b[2])
+    end)
 end
 
 local function shouldHideVirtualUpArrow(self, path)
@@ -338,6 +408,7 @@ function FileChooser:getVirtualList(path, collate)
     end
     if meta_name then
         local matching_values = self.ui.coverbrowser:getMatchingMetadataValues(base_dir, meta_name, filters)
+        sortVirtualMetadataValues(matching_values)
         for i, v in ipairs(matching_values) do
             -- Ignore those already present in the current filters
             if not filters_seen[meta_name] or not filters_seen[meta_name][v[1]] then
@@ -364,6 +435,7 @@ function FileChooser:getVirtualList(path, collate)
         end
     else
         local matching_files = self.ui.coverbrowser:getMatchingFiles(base_dir, filters)
+        sortVirtualMatchingFiles(matching_files, getVirtualLeafSortMode(filters))
         for i, v in ipairs(matching_files) do
             local fullpath, f = unpack(v)
             local attributes = lfs.attributes(fullpath)
@@ -406,12 +478,38 @@ FileChooser.genItemTable = function (self, dirs, files, path)
     -- end
 
     local up_path = path:gsub("(/[^/]+)$", "")
-    local item_table
+    local item_table = {}
 
-    item_table = FileChooser_genItemTable(self, dirs, files, path)
-
-    if item_table[1] and item_table[1].path:find("/..$") then
-        item_table[1].path = virtual_path_type ~= nil and up_path or path.."/.."
+    if virtual_path_type ~= nil then
+        table.move(dirs, 1, #dirs, 1, item_table)
+        table.move(files, 1, #files, #item_table + 1, item_table)
+        if path ~= "/" and not (G_reader_settings:isTrue("lock_home_folder") and
+                                path == G_reader_settings:readSetting("home_dir")) then
+            table.insert(item_table, 1, {
+                text = BD.mirroredUILayout() and BD.ltr("../ ⬆") or "⬆ ../",
+                path = up_path,
+                is_go_up = true,
+            })
+        end
+        if self.show_current_dir_for_hold then
+            table.insert(item_table, 1, {
+                text = _("Long-press here to choose current folder"),
+                bold = true,
+                path = path.."/.",
+            })
+        end
+        if ffi.os == "Windows" then
+            for _, v in ipairs(item_table) do
+                if v.text then
+                    v.text = ffiUtil.multiByteToUTF8(v.text) or ""
+                end
+            end
+        end
+    else
+        item_table = FileChooser_genItemTable(self, dirs, files, path)
+        if item_table[1] and item_table[1].path:find("/..$") then
+            item_table[1].path = path.."/.."
+        end
     end
 
     if shouldHideVirtualUpArrow(self, path) and item_table[1] and item_table[1].path == up_path then
@@ -529,7 +627,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             return {}
         end
         local vars = {}
-        local sql = "select directory||filename, filename from bookinfo where directory glob ?"
+        local sql = "select directory||filename, filename, title, series, series_index from bookinfo where directory glob ?"
         table.insert(vars, base_dir..'/*')
         for _, filter in ipairs(filters) do
             local name, value = filter[1], filter[2]
@@ -558,7 +656,13 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             if not row then
                 break
             end
-            table.insert(results, {row[1], row[2]})
+            table.insert(results, {
+                row[1],
+                row[2],
+                title = row[3],
+                series = row[4],
+                series_index = tonumber(row[5]),
+            })
         end
         -- logger.warn(results)
         return results

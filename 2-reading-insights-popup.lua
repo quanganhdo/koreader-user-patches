@@ -26,6 +26,7 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
+local LuaData = require("luadata")
 local ReaderUI = require("apps/reader/readerui")
 local Size = require("ui/size")
 local SQ3 = require("lua-ljsqlite3/init")
@@ -205,6 +206,8 @@ local MONTH_NAMES_FULL = {
 }
 
 local db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
+local cache_path = DataStorage:getSettingsDir() .. "/reading_insights_cache.lua"
+local CACHE_SCHEMA_VERSION = 1
 local ReadingInsightsPopup
 
 local INSIGHTS_MODE_KEY = "reading_insights_popup_mode"
@@ -246,6 +249,46 @@ local function withStatsDb(fallback, fn)
         return result
     end
     return fallback
+end
+
+local function getLastReadTimestamp()
+    return withStatsDb(0, function(conn)
+        local last_ts = 0
+        withStatement(conn, "SELECT MAX(start_time) FROM page_stat_data", function(stmt)
+            for row in stmt:rows() do
+                last_ts = tonumber(row[1]) or 0
+            end
+        end)
+        return last_ts
+    end)
+end
+
+local function openInsightsCache()
+    local cache = LuaData:open(cache_path, "ReadingInsightsCache")
+    local schema = cache:readSetting("schema")
+    if schema ~= CACHE_SCHEMA_VERSION then
+        cache.data = { schema = CACHE_SCHEMA_VERSION }
+        cache:flush()
+    end
+    return cache
+end
+
+local function buildMonthlyData(year, values, value_key)
+    local months = {}
+    if type(values) ~= "table" then
+        values = {}
+    end
+    for month_num = 1, 12 do
+        local year_month = string.format("%04d-%02d", year, month_num)
+        local value = tonumber(values[month_num]) or 0
+        table.insert(months, {
+            month = year_month,
+            [value_key] = value,
+            label = MONTH_NAMES_SHORT[month_num],
+            label_full = MONTH_NAMES_FULL[month_num],
+        })
+    end
+    return months
 end
 
 local function withStatement(conn, sql, fn)
@@ -987,19 +1030,15 @@ function ReadingInsightsPopup:getMonthlyReadingDays(year)
         local results = {}
         withStatement(conn, sql, function(stmt)
             for row in stmt:rows() do
-                results[row[1]] = row[2]
+                local month_num = row[1] and tonumber(row[1]:sub(6, 7))
+                if month_num then
+                    results[month_num] = row[2]
+                end
             end
         end)
 
         for month_num = 1, 12 do
-            local year_month = string.format("%04d-%02d", year, month_num)
-            local days = tonumber(results[year_month]) or 0
-            table.insert(months, {
-                month = year_month,
-                days = days,
-                label = MONTH_NAMES_SHORT[month_num],
-                label_full = MONTH_NAMES_FULL[month_num],
-            })
+            months[month_num] = tonumber(results[month_num]) or 0
         end
 
         return months
@@ -1027,19 +1066,15 @@ function ReadingInsightsPopup:getMonthlyReadingHours(year)
         local results = {}
         withStatement(conn, sql, function(stmt)
             for row in stmt:rows() do
-                results[row[1]] = row[2]
+                local month_num = row[1] and tonumber(row[1]:sub(6, 7))
+                if month_num then
+                    results[month_num] = row[2]
+                end
             end
         end)
 
         for month_num = 1, 12 do
-            local year_month = string.format("%04d-%02d", year, month_num)
-            local hours = tonumber(results[year_month]) or 0
-            table.insert(months, {
-                month = year_month,
-                hours = hours,
-                label = MONTH_NAMES_SHORT[month_num],
-                label_full = MONTH_NAMES_FULL[month_num],
-            })
+            months[month_num] = tonumber(results[month_num]) or 0
         end
 
         return months
@@ -1259,19 +1294,104 @@ function ReadingInsightsPopup:init()
     local screen_w = Screen:getWidth()
     local screen_h = Screen:getHeight()
     self.mode = normalizeInsightsMode(self.mode or readInsightsMode())
+    if self.ui and self.ui.statistics and self.ui.statistics.insertDB then
+        self.ui.statistics:insertDB()
+    end
     local today_stats = self:getTodayStats()
-    local streaks = self:calculateStreaks()
-    local year_range = self:getYearRange()
+
+    local cache = openInsightsCache()
+    local cache_dirty = false
+
+    local last_read_ts = getLastReadTimestamp()
+    local last_read_day = last_read_ts > 0 and os.date("%Y-%m-%d", last_read_ts) or nil
+    local last_read_year = last_read_ts > 0 and tonumber(os.date("%Y", last_read_ts)) or nil
+    local cached_last_read_ts = cache:readSetting("last_read_ts")
+    local cached_last_read_day = cache:readSetting("last_read_day")
+    local cached_last_read_year = cache:readSetting("last_read_year")
+
+    local streaks = cache:readSetting("streaks")
+    if not streaks or cached_last_read_day ~= last_read_day then
+        streaks = self:calculateStreaks()
+        cache.data.streaks = streaks
+        cache_dirty = true
+    end
+
+    local year_range = cache:readSetting("year_range")
+    if not year_range or cached_last_read_year ~= last_read_year then
+        year_range = self:getYearRange()
+        cache.data.year_range = year_range
+        cache_dirty = true
+    end
+
     self.year_range = year_range
     if not self.selected_year then
         self.selected_year = year_range.max_year
     end
-    local yearly_stats = self:getYearlyStats(self.selected_year)
-    local monthly_data
-    if self.mode == INSIGHTS_MODE_HOURS then
-        monthly_data = self:getMonthlyReadingHours(self.selected_year)
-    else
-        monthly_data = self:getMonthlyReadingDays(self.selected_year)
+
+    local yearly_stats_cache = cache:readSetting("yearly_stats")
+    if type(yearly_stats_cache) ~= "table" then
+        yearly_stats_cache = {}
+    end
+
+    local monthly_data_cache = cache:readSetting("monthly_data")
+    if type(monthly_data_cache) ~= "table" then
+        monthly_data_cache = {}
+    end
+    if type(monthly_data_cache.days) ~= "table" then
+        monthly_data_cache.days = {}
+    end
+    if type(monthly_data_cache.hours) ~= "table" then
+        monthly_data_cache.hours = {}
+    end
+
+    local selected_year_key = tostring(self.selected_year)
+    local refresh_current_year = last_read_year
+        and self.selected_year == last_read_year
+        and cached_last_read_ts ~= last_read_ts
+
+    if not yearly_stats_cache[selected_year_key] or refresh_current_year then
+        yearly_stats_cache[selected_year_key] = self:getYearlyStats(self.selected_year)
+        cache.data.yearly_stats = yearly_stats_cache
+        cache_dirty = true
+    end
+    local yearly_stats = yearly_stats_cache[selected_year_key] or { days = 0, pages = 0, duration = 0 }
+
+    local mode_key = self.mode == INSIGHTS_MODE_HOURS and "hours" or "days"
+    local monthly_by_mode = monthly_data_cache[mode_key]
+    local refresh_monthly = last_read_year
+        and self.selected_year == last_read_year
+        and ((self.mode == INSIGHTS_MODE_HOURS and cached_last_read_ts ~= last_read_ts)
+            or (self.mode ~= INSIGHTS_MODE_HOURS and cached_last_read_day ~= last_read_day))
+
+    local monthly_values = monthly_by_mode[selected_year_key]
+    if type(monthly_values) ~= "table" or type(monthly_values[1]) == "table" then
+        monthly_values = nil
+    end
+    if not monthly_values or refresh_monthly then
+        if self.mode == INSIGHTS_MODE_HOURS then
+            monthly_values = self:getMonthlyReadingHours(self.selected_year)
+        else
+            monthly_values = self:getMonthlyReadingDays(self.selected_year)
+        end
+        monthly_by_mode[selected_year_key] = monthly_values
+        cache.data.monthly_data = monthly_data_cache
+        cache_dirty = true
+    end
+    local value_key = mode_key
+    local monthly_data = buildMonthlyData(self.selected_year, monthly_values, value_key)
+
+    if cached_last_read_ts ~= last_read_ts
+        or cached_last_read_day ~= last_read_day
+        or cached_last_read_year ~= last_read_year then
+        cache.data.last_read_ts = last_read_ts
+        cache.data.last_read_day = last_read_day
+        cache.data.last_read_year = last_read_year
+        cache_dirty = true
+    end
+
+    if cache_dirty then
+        cache.data.schema = CACHE_SCHEMA_VERSION
+        cache:flush()
     end
 
     local fonts = buildSerifFonts()

@@ -86,6 +86,15 @@ local function clearVirtualCaches()
     virtual_matching_files_cache = {}
 end
 
+local function invalidateVirtualCaches(base_dir)
+    if not base_dir or virtual_cache_base_dir == nil or virtual_cache_base_dir == base_dir then
+        clearVirtualCaches()
+        if not base_dir then
+            virtual_cache_base_dir = nil
+        end
+    end
+end
+
 local function ensureVirtualCacheBaseDir(base_dir)
     if not base_dir then
         return
@@ -493,6 +502,14 @@ FileChooser.genItemTableFromPath = function (self, path)
     return FileChooser_genItemTableFromPath(self, path)
 end
 
+local FileChooser_refreshPath = FileChooser.refreshPath
+FileChooser.refreshPath = function(self)
+    if self:getVirtualPathTypePath(self.path) then
+        invalidateVirtualCaches(getVirtualBaseDir(self.path))
+    end
+    return FileChooser_refreshPath(self)
+end
+
 -- Patch FileChooser:genItemTable()
 local FileChooser_genItemTable = FileChooser.genItemTable
 FileChooser.genItemTable = function (self, dirs, files, path)
@@ -597,60 +614,32 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
 
     -- Add BookInfoManager:getMatchingMetadataValues()
     function BookInfoManager:getMatchingMetadataValues(base_dir, meta_name, filters)
-        local vars = {}
-        local sql = T("select %1, count(1) from bookinfo where directory glob ?", meta_name)
-            -- GLOB is case sensitive, unlike LIKE. Also, LIKE is case insentive only
-            -- with ASCII chars, and not Unicode ones, so it's a bit useless.
-        table.insert(vars, base_dir..'/*')
-        for _, filter in ipairs(filters) do
-            local name, value = filter[1], filter[2]
-            if value == false then
-                sql = T("%1 and %2 is NULL", sql, name)
-            elseif name == "authors" then
-                -- authors may have multiple values, separated by \n
-                sql = T("%1 and '\n'||%2||'\n' GLOB ?", sql, name)
-                table.insert(vars, "*\n"..value.."\n*")
-            else
-                sql = T("%1 and %2=?", sql, name)
-                table.insert(vars, value)
-            end
-        end
-        sql = T("%1 group by %2", sql, meta_name)
-            -- We might want to "group by" in a somehow case insentive manner,
-            -- but we would need to pick one of the variously cased values to
-            -- be returned and display, but which?
-            -- (mey be using group_concat(meta_name), and picking the one
-            -- with the most occurences, or the first)
-        -- logger.warn(sql, vars)
-        self:openDbConnection()
-        local stmt = self.db_conn:prepare(sql)
-        stmt:bind(table.unpack(vars))
         local results = {}
-        local xresults = {}
-        local use_results_as_is = meta_name ~= "authors"
-        while true do
-            local row = stmt:step()
-            if not row then
-                break
-            end
-            if use_results_as_is then
-                table.insert(results, {row[1] or false, tonumber(row[2])})
-            else
-                -- authors may have multiple values, separated by \n
-                local value, nb = row[1] or false, tonumber(row[2])
-                if value and value:find("\n") then
-                    for val in util.gsplit(value, "\n") do
-                        xresults[val] = xresults[val] and (xresults[val] + nb) or nb
+        local grouped = {}
+        if meta_name ~= "authors" and meta_name ~= "series" then
+            return results
+        end
+
+        local matching_files = self:getMatchingFiles(base_dir, filters)
+        for _, row in ipairs(matching_files) do
+            if meta_name == "authors" then
+                local authors = row.authors
+                if authors and authors:find("\n") then
+                    for author in util.gsplit(authors, "\n") do
+                        grouped[author] = (grouped[author] or 0) + 1
                     end
                 else
-                    xresults[value] = xresults[value] and (xresults[value] + nb) or nb
+                    local author = authors or false
+                    grouped[author] = (grouped[author] or 0) + 1
                 end
+            else
+                local value = row.series or false
+                grouped[value] = (grouped[value] or 0) + 1
             end
         end
-        if not use_results_as_is then
-            for value, nb in pairs(xresults) do
-                table.insert(results, {value, nb})
-            end
+
+        for value, nb in pairs(grouped) do
+            table.insert(results, {value, nb})
         end
         return results
     end
@@ -661,7 +650,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             return {}
         end
         local vars = {}
-        local sql = "select directory||filename, filename, title, series, series_index from bookinfo where directory glob ?"
+        local sql = "select directory||filename, filename, title, authors, series, series_index from bookinfo where directory glob ?"
         table.insert(vars, base_dir..'/*')
         for _, filter in ipairs(filters) do
             local name, value = filter[1], filter[2]
@@ -690,13 +679,16 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             if not row then
                 break
             end
-            table.insert(results, {
-                row[1],
-                row[2],
-                title = row[3],
-                series = row[4],
-                series_index = tonumber(row[5]),
-            })
+            if lfs.attributes(row[1], "mode") == "file" then
+                table.insert(results, {
+                    row[1],
+                    row[2],
+                    title = row[3],
+                    authors = row[4],
+                    series = row[5],
+                    series_index = tonumber(row[6]),
+                })
+            end
         end
         -- logger.warn(results)
         return results

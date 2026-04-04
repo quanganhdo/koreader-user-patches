@@ -30,35 +30,19 @@ local T = ffiUtil.template
 local FileManager = require("apps/filemanager/filemanager")
 local FileChooser = require("ui/widget/filechooser")
 
--- "\u{EA30} browse by metadata \u{EA30} \u{E7F5} \u{E7FC} \u{e8d5} \u{eec3} \u{e93a} \u{e92f} \u{e9c4} \u{ed49} \u{ea27} \u{edf8} \u{ebfa} \u{ebf8} \u{ebfc} \u{ec66} \u{ec68} \u{ec6d} \u{ec9e}"
 local VIRTUAL_ITEMS = {
     ROOT = {
-        browse_text = _("Browse by metadata"),
-        filter_text = _("Filter by metadata"),
         symbol = "\u{e257}",
-        -- symbol = "\u{ee30}",
-        -- symbol = "\u{ee26}",
     },
     AUTHOR = {
         browse_text = _("Browse by author"),
-        filter_text = _("Filter by author"),
         db_column = "authors",
         symbol = "\u{f2c0}",
-        -- symbol = "\u{ed49}",
-        -- symbol = "\u{f1ae}",
-        -- symbol = "\u{f007}",
-        -- symbol = "\u{e84e}",
     },
     SERIES = {
         browse_text = _("Browse by series"),
-        filter_text = _("Filter by series"),
         db_column = "series",
         symbol = "\u{ecd7}",
-        -- symbol = "\u{ec68}",
-        -- symbol = "\u{ec75}",
-        -- symbol = "\u{ed37}",
-        -- symbol = "\u{f03d}",
-        -- symbol = "\u{f447}",
     },
 }
 
@@ -387,12 +371,6 @@ function FileChooser:getVirtualList(path, collate)
         table.insert(fragments, fragment)
     end
     if #fragments == 0 or fragments[#fragments] == VIRTUAL_ROOT_SYMBOL then
-        local filtering = #fragments > 0
-        if filtering then
-            -- Showing a 2nd ROOT symbol: make a tap on the subitems just replace it
-            path = path:match("(.*)/.*")
-        end
-
         for i, v in ipairs(VIRTUAL_SUBITEMS_ORDERED) do
             item = true
             if collate then -- when collate == nil count only to display in folder mandatory
@@ -403,7 +381,7 @@ function FileChooser:getVirtualList(path, collate)
                     change = 0,
                     size = i,
                 }
-                item = self:getListItem(nil, v.symbol.." "..(filtering and v.filter_text or v.browse_text), path.."/"..v.symbol, fake_attributes, collate)
+                item = self:getListItem(nil, v.symbol.." "..v.browse_text, path.."/"..v.symbol, fake_attributes, collate)
                 item.mandatory = nil
             end
             table.insert(dirs, item)
@@ -860,39 +838,4 @@ FileManagerShortcuts_editShortcut = FileManagerShortcuts.editShortcut
 FileManagerShortcuts.editShortcut = function (self, folder, post_callback)
     if self.ui.file_chooser:getVirtualPathTypePath() then return end
     FileManagerShortcuts_editShortcut(self, folder, post_callback)
-end
-
--- enable 'Open random document' in virtual folders
-local FileManager_openRandomFile = FileManager.openRandomFile
-FileManager.openRandomFile = function (self, dir)
-    if type(dir) == "table" then
-        dir = dir.dir
-    end
-    if self.file_chooser:getVirtualPathTypePath(dir) then
-        self.file_chooser.item_table.dir = dir
-        dir = self.file_chooser.item_table
-    end
-    FileManager_openRandomFile(self, dir)
-end
-
-local filemanagerutil = require("apps/filemanager/filemanagerutil")
-function filemanagerutil.getRandomFile(dir, match_func)
-    local files = {}
-    if type(dir) == "string" then
-        util.findFiles(dir, function(file)
-            if match_func(file) then
-                table.insert(files, file)
-            end
-        end, false)
-    else
-        for _, item in ipairs(dir) do
-            if item.is_file and match_func(item.path) then
-                table.insert(files, item.path)
-            end
-        end
-    end
-    if #files > 0 then
-        math.randomseed(os.time())
-        return files[math.random(#files)]
-    end
 end

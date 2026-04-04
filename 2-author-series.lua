@@ -1,5 +1,5 @@
 -- Author/Series browser userpatch
--- Version: 1.0.3
+-- Version: 1.0.4
 -- Updates: https://github.com/quanganhdo/koreader-user-patches
 -- 
 -- Adapted from medinauta's user patch:
@@ -9,13 +9,9 @@
 -- https://github.com/koreader/koreader/issues/8472
 -- https://github.com/poire-z/koreader/commit/ad03650b5d7e19a8de45857c83a2d7a4c7e13a4a
 -- 
--- Regressions/changes in userpatch version:
--- * collate (sort) is not overridden, so the sort in the metadata menu is no longer forced to sort by size
--- * is_directory is not set to true in ListMenuItem:update() and MosaicMenuItem:update()
---   * I don't know what effect this was supposed to have, possibly change the display? It seems like it may already evaluate to true
--- * removed unused item.nb_sub_dirs display formatting
--- * instead of patching FileChooser:changeToPath(), ffiUtil.realpath() is patched globally to support virtual directories
--- * added fallback in genItemTable() to support file search results with nil path
+-- Changelog:
+-- * 1.0.4: refresh virtual folders after deletes, trim unused virtual-folder code, and keep the patch focused on author/series browsing
+-- * 1.0.3: renamed from BrowseByMetadata, added representative covers and custom virtual-folder styling, and limited browsing to author/series
 
 local userpatch = require("userpatch")
 local ffi = require("ffi")

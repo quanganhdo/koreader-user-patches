@@ -1,6 +1,10 @@
 -- Custom time remaining format: "X hr Y mins left in chapter/book" when hours are present.
--- Version: 1.0.3
+-- Version: 1.0.4
 -- Updates: https://github.com/quanganhdo/koreader-user-patches
+-- Changelog:
+-- * 1.0.4: version bump
+-- * 1.0.1: added l10n support and aligned calculations with stock behavior
+-- * 1.0.0: initial release
 local ReaderFooter = require("apps/reader/modules/readerfooter")
 local Math = require("optmath")
 

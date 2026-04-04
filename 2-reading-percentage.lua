@@ -1,6 +1,9 @@
 -- File browser reading percentage badge
--- Version: 1.0.3
+-- Version: 1.0.4
 -- Updates: https://github.com/quanganhdo/koreader-user-patches
+-- Changelog:
+-- * 1.0.4: added the finished-book checkmark badge and refined badge styling
+-- * 1.0.3: initial release
 local userpatch = require("userpatch")
 
 userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)

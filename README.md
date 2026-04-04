@@ -2,7 +2,7 @@
 
 Some of my personal user patches to add extra bells and whistles to your KOReader experience.
 
-Current version: `1.0.3`
+Current version: `1.0.4`
 
 ## Installation
 

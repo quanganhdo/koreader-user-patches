@@ -5,8 +5,14 @@ Controls: Any key to dismiss; Prev/Next to navigate years; Center D-pad to toggl
 Tap left yearly value to switch days/hours
 Tap right yearly value or monthly bars to open book list
 Tap monthly header to switch days/hours
-Version: 1.0.3
+Version: 1.0.4
 Updates: https://github.com/quanganhdo/koreader-user-patches
+Changelog:
+* 1.0.4: version bump
+* 1.0.3: added cached insights aggregates and modal book lists
+* 1.0.2: added keyboard navigation, hour display mode, and File Manager availability
+* 1.0.1: added l10n support and aligned calculations with stock behavior
+* 1.0.0: initial release
 ]]--
 
 local Blitbuffer = require("ffi/blitbuffer")

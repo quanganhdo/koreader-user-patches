@@ -756,15 +756,16 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         local ty = target.dimen.y
         local tw = target.dimen.w
         local th = target.dimen.h
-        local line_h = math.max(2, Size.line.thin)
-        local line_w1 = math.floor(tw * 0.80)
-        local line_w2 = math.floor(tw * 0.90)
-        local line_x1 = tx + math.floor((tw - line_w1) / 2)
-        local line_x2 = tx + math.floor((tw - line_w2) / 2)
-        local line_y1 = math.max(0, ty - Screen:scaleBySize(8))
-        local line_y2 = math.max(line_y1 + line_h + 1, ty - Screen:scaleBySize(4))
-        bb:paintRect(line_x1, line_y1, line_w1, line_h, Blitbuffer.COLOR_GRAY_9)
-        bb:paintRect(line_x2, line_y2, line_w2, line_h, Blitbuffer.COLOR_GRAY_9)
+        local line_w = math.max(2, Size.line.thin)
+        local line_h1 = math.floor(th * 0.95)
+        local line_h2 = math.floor(th * 0.90)
+        local line_gap = Screen:scaleBySize(3)
+        local line_x1 = tx + tw + line_gap
+        local line_x2 = line_x1 + line_w + line_gap
+        local line_y1 = ty + math.floor((th - line_h1) / 2)
+        local line_y2 = ty + math.floor((th - line_h2) / 2)
+        bb:paintRect(line_x1, line_y1, line_w, line_h1, Blitbuffer.COLOR_GRAY_9)
+        bb:paintRect(line_x2, line_y2, line_w, line_h2, Blitbuffer.COLOR_GRAY_9)
 
         local badge = getVirtualLeafBadge(item.entry.virtual_leaf_count)
         local badge_size = badge:getSize()
@@ -789,11 +790,16 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         item.entry.is_file = true
         item.filepath = item.entry.representative_filepath
         item.is_virtual_metadata_leaf = true
+        item.do_hint_opened = false
 
         local results = table.pack(update_func(item, ...))
 
         item.entry.file = original_entry_file
         item.entry.is_file = original_entry_is_file
+        item.do_hint_opened = false
+        item.been_opened = false
+        item.status = nil
+        item.show_progress_bar = false
         return table.unpack(results, 1, results.n)
     end
 

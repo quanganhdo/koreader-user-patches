@@ -6,6 +6,7 @@ local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
 local Device = require("device")
 local FileManager = require("apps/filemanager/filemanager")
+local FileChooser = require("ui/widget/filechooser")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
@@ -25,10 +26,50 @@ local DGENERIC_ICON_SIZE = G_defaults:readSetting("DGENERIC_ICON_SIZE")
 local VIRTUAL_ROOT_SYMBOL = "\u{e257}"
 local AUTHOR_SYMBOL = "\u{f2c0}"
 local SERIES_SYMBOL = "\u{ecd7}"
+local EMPTY_VALUE_SYMBOL = "\u{2205}"
+
+local function findVirtualRoot(path)
+    if path then
+        return path:find("/" .. VIRTUAL_ROOT_SYMBOL, 1, true)
+    end
+end
+
+local function getVirtualFragments(path)
+    local _root_start, root_end = findVirtualRoot(path)
+    if not root_end then
+        return
+    end
+
+    local fragments = {}
+    for fragment in path:sub(root_end + 1):gmatch("[^/]+") do
+        table.insert(fragments, fragment)
+    end
+    return fragments
+end
+
+local function getMetadataLeafInfo(path)
+    local fragments = getVirtualFragments(path)
+    if not fragments or #fragments < 2 then
+        return
+    end
+    if fragments[1] ~= AUTHOR_SYMBOL and fragments[1] ~= SERIES_SYMBOL then
+        return
+    end
+
+    local title = fragments[2]
+    if title == EMPTY_VALUE_SYMBOL then
+        title = EMPTY_VALUE_SYMBOL
+    end
+
+    return {
+        title = title,
+        parent_path = path:gsub("(/[^/]+)$", ""),
+    }
+end
 
 local function getVirtualBaseDir(file_manager)
     local path = file_manager.file_chooser and file_manager.file_chooser.path
-    local root_start = path and path:find("/" .. VIRTUAL_ROOT_SYMBOL, 1, true)
+    local root_start = findVirtualRoot(path)
     if root_start then
         return path:sub(1, root_start - 1)
     end
@@ -51,25 +92,55 @@ end
 
 local function getSelectedTabKey(file_manager)
     local path = file_manager and file_manager.file_chooser and file_manager.file_chooser.path
-    local root_start, root_end
-    if path then
-        root_start, root_end = path:find("/" .. VIRTUAL_ROOT_SYMBOL, 1, true)
-    end
-    if not root_start then
+    local fragments = getVirtualFragments(path)
+    if not fragments then
         return "books"
     end
 
-    for fragment in path:sub(root_end + 1):gmatch("[^/]+") do
+    for _, fragment in ipairs(fragments) do
         if fragment == AUTHOR_SYMBOL then
             return "authors"
         elseif fragment == SERIES_SYMBOL then
             return "series"
-        elseif fragment ~= "" then
-            break
         end
     end
 
     return "books"
+end
+
+local function getBackTitleBarInfo(file_manager)
+    local path = file_manager and file_manager.file_chooser and file_manager.file_chooser.path
+    local leaf_info = getMetadataLeafInfo(path)
+    if not leaf_info then
+        return
+    end
+
+    return {
+        title = leaf_info.title,
+        parent_path = leaf_info.parent_path,
+        current_path = path,
+    }
+end
+
+local ModeLeftContainer = LeftContainer:extend{
+    visible_func = nil,
+}
+
+function ModeLeftContainer:isVisible()
+    return self.visible_func == nil or self.visible_func()
+end
+
+function ModeLeftContainer:paintTo(bb, x, y)
+    if self:isVisible() then
+        return LeftContainer.paintTo(self, bb, x, y)
+    end
+end
+
+function ModeLeftContainer:handleEvent(event)
+    if self:isVisible() then
+        return LeftContainer.handleEvent(self, event)
+    end
+    return false
 end
 
 local MetadataTabsTitleBar = OverlapGroup:extend{
@@ -155,6 +226,7 @@ function MetadataTabsTitleBar:init()
     self.books_button = self.books_tab.button
     self.series_button = self.series_tab.button
     self.authors_button = self.authors_tab.button
+    self.tab_label_height = self.books_button.label_container.dimen.h
 
     self.tabs_group = HorizontalGroup:new{
         align = "bottom",
@@ -178,7 +250,7 @@ function MetadataTabsTitleBar:init()
         VerticalSpan:new{ width = titlebar_body_height - tabs_size.h },
         self.tabs_group,
     }
-    self.tabs_container = LeftContainer:new{
+    self.tabs_container = ModeLeftContainer:new{
         allow_mirroring = false,
         dimen = Geom:new{
             x = 0,
@@ -186,10 +258,82 @@ function MetadataTabsTitleBar:init()
             w = self.width,
             h = titlebar_body_height,
         },
+        visible_func = function()
+            return self.back_title_info == nil
+        end,
         self.tabs_stack,
     }
     table.insert(self, self.tabs_container)
     self:updateSelectedTab(false)
+
+    self.back_title_width = self.width - (3 * self.icon_size + 2 * self.button_padding)
+    self.back_button = Button:new{
+        text = "",
+        align = "left",
+        text_font_face = self.tab_font_face,
+        text_font_size = self.tab_font_size,
+        text_font_bold = true,
+        width = self.back_title_width,
+        height = self.tab_label_height,
+        bordersize = 0,
+        padding_h = self.tab_padding_h,
+        padding_v = self.tab_padding_v,
+        callback = function()
+            self:onBackTitleTap()
+        end,
+        show_parent = self.show_parent,
+    }
+    self.back_chevron_button = Button:new{
+        icon = "chevron.left",
+        icon_width = self.tab_label_height,
+        icon_height = self.tab_label_height,
+        height = self.tab_label_height,
+        bordersize = 0,
+        padding_h = 0,
+        padding_v = self.tab_padding_v,
+        callback = function()
+            self:onBackTitleTap()
+        end,
+        show_parent = self.show_parent,
+    }
+    self.back_button.width = self.back_title_width - self.back_chevron_button:getSize().w
+    self.back_button:init()
+    self.back_row = HorizontalGroup:new{
+        align = "bottom",
+        allow_mirroring = false,
+        self.back_chevron_button,
+        self.back_button,
+    }
+    self.back_title_line = LineWidget:new{
+        style = "none",
+        dimen = Geom:new{ w = self.back_title_width, h = self.tab_underline_height },
+        background = Blitbuffer.COLOR_BLACK,
+    }
+    self.back_title_group = VerticalGroup:new{
+        align = "left",
+        self.back_row,
+        self.back_title_line,
+    }
+    self.back_stack = VerticalGroup:new{
+        align = "left",
+        VerticalSpan:new{ width = titlebar_body_height - tabs_size.h },
+        self.back_title_group,
+    }
+    self.back_container = ModeLeftContainer:new{
+        allow_mirroring = false,
+        dimen = Geom:new{
+            x = 0,
+            y = 0,
+            w = self.width,
+            h = titlebar_body_height,
+        },
+        visible_func = function()
+            return self.back_title_info ~= nil
+        end,
+        self.back_stack,
+    }
+    table.insert(self, self.back_container)
+    self:updateBackTitle(false)
 
     self.right_button = IconButton:new{
         icon = self.right_icon,
@@ -226,6 +370,32 @@ function MetadataTabsTitleBar:init()
     OverlapGroup.init(self)
 end
 
+function MetadataTabsTitleBar:updateBackTitle(refresh)
+    local file_manager = self.file_manager or FileManager.instance
+    local back_title_info = getBackTitleBarInfo(file_manager)
+    local title = back_title_info and back_title_info.title or nil
+    if self.back_title == title then
+        return
+    end
+
+    self.back_title_info = back_title_info
+    self.back_title = title
+    self.back_button:setText(title or "", self.back_button.width)
+
+    if refresh ~= false then
+        UIManager:setDirty(self.show_parent, "ui", self.dimen)
+    end
+end
+
+function MetadataTabsTitleBar:onBackTitleTap()
+    local file_manager = self.file_manager or FileManager.instance
+    local file_chooser = file_manager and file_manager.file_chooser
+    local back_title_info = getBackTitleBarInfo(file_manager)
+    if file_chooser and back_title_info then
+        file_chooser:changeToPath(back_title_info.parent_path, back_title_info.current_path)
+    end
+end
+
 function MetadataTabsTitleBar:setTabSelected(tab, selected)
     tab.line.style = selected and "solid" or "none"
     if tab.button.label_widget and tab.button.label_widget.bold ~= selected then
@@ -254,6 +424,7 @@ end
 function MetadataTabsTitleBar:paintTo(bb, x, y)
     self.dimen.x = x
     self.dimen.y = y
+    self:updateBackTitle(false)
     self:updateSelectedTab(false)
     OverlapGroup.paintTo(self, bb, x, y)
     if self.books_button and self.books_button[1] and self.books_button[1].dimen then
@@ -269,6 +440,7 @@ function MetadataTabsTitleBar:setTitle()
 end
 
 function MetadataTabsTitleBar:setSubTitle()
+    self:updateBackTitle()
     self:updateSelectedTab()
 end
 
@@ -285,6 +457,7 @@ end
 function MetadataTabsTitleBar:generateHorizontalLayout()
     return {
         {
+            self.back_button,
             self.books_button,
             self.series_button,
             self.authors_button,
@@ -295,6 +468,7 @@ end
 
 function MetadataTabsTitleBar:generateVerticalLayout()
     return {
+        { self.back_button },
         { self.books_button },
         { self.series_button },
         { self.authors_button },
@@ -333,6 +507,20 @@ local function findTitleBarUpvalue(func, seen)
             return target_func, target_idx, original
         end
     end
+end
+
+local FileChooser_genItemTable = FileChooser.genItemTable
+FileChooser.genItemTable = function(self, dirs, files, path)
+    local item_table = FileChooser_genItemTable(self, dirs, files, path)
+    local leaf_info = getMetadataLeafInfo(path)
+    if leaf_info then
+        local first_item = item_table[1]
+        if first_item and first_item.is_go_up and first_item.path == leaf_info.parent_path then
+            table.remove(item_table, 1)
+            self.path_items[path] = nil
+        end
+    end
+    return item_table
 end
 
 local FileManager_setupLayout = FileManager.setupLayout

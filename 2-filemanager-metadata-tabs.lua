@@ -5,15 +5,20 @@
 local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
 local Device = require("device")
+local Event = require("ui/event")
 local FileManager = require("apps/filemanager/filemanager")
 local FileChooser = require("ui/widget/filechooser")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
-local IconButton = require("ui/widget/iconbutton")
+local HorizontalSpan = require("ui/widget/horizontalspan")
+local InfoMessage = require("ui/widget/infomessage")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
+local NetworkMgr = require("ui/network/manager")
 local OverlapGroup = require("ui/widget/overlapgroup")
+local PluginLoader = require("pluginloader")
+local RightContainer = require("ui/widget/container/rightcontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
@@ -27,6 +32,11 @@ local VIRTUAL_ROOT_SYMBOL = "\u{e257}"
 local AUTHOR_SYMBOL = "\u{f2c0}"
 local SERIES_SYMBOL = "\u{ecd7}"
 local EMPTY_VALUE_SYMBOL = "\u{2205}"
+local NIGHT_MODE_SYMBOL = "◐"
+local FRONTLIGHT_SYMBOL = "☼"
+local FRONTLIGHT_OFF_SYMBOL = "☀"
+local WIFI_ON_SYMBOL = ""
+local WIFI_OFF_SYMBOL = ""
 
 local function findVirtualRoot(path)
     if path then
@@ -122,6 +132,99 @@ local function getBackTitleBarInfo(file_manager)
     }
 end
 
+local function getBatteryText()
+    if not Device:hasBattery() then
+        return ""
+    end
+
+    local powerd = Device:getPowerDevice()
+    local batt_lvl = powerd:getCapacity()
+    local batt_symbol
+    if Device:hasAuxBattery() and powerd:isAuxBatteryConnected() then
+        batt_lvl = batt_lvl + powerd:getAuxCapacity()
+        batt_symbol = powerd:getBatterySymbol(powerd:isAuxCharged(), powerd:isAuxCharging(), batt_lvl / 2)
+    else
+        batt_symbol = powerd:getBatterySymbol(powerd:isCharged(), powerd:isCharging(), batt_lvl)
+    end
+    return batt_symbol .. batt_lvl .. "%"
+end
+
+local function getWifiText()
+    if not Device:hasWifiToggle() then
+        return ""
+    end
+    if NetworkMgr.is_wifi_on == nil then
+        NetworkMgr:queryNetworkState()
+    end
+    if NetworkMgr.is_wifi_on then
+        return WIFI_ON_SYMBOL
+    end
+    return WIFI_OFF_SYMBOL
+end
+
+local function getFrontlightText()
+    if Device:hasFrontlight() then
+        local powerd = Device:getPowerDevice()
+        return powerd:isFrontlightOn() and FRONTLIGHT_SYMBOL or FRONTLIGHT_OFF_SYMBOL
+    end
+    return ""
+end
+
+local function showBatteryInfo()
+    if not Device:hasBattery() then
+        return
+    end
+    if PluginLoader.loaded_plugins and PluginLoader:isPluginLoaded("batterystat") then
+        UIManager:broadcastEvent(Event:new("ShowBatteryStatistics"))
+        return
+    end
+
+    UIManager:show(InfoMessage:new{
+        text = getBatteryText(),
+    })
+end
+
+local function toggleWifi(refresh_callback)
+    if not Device:hasWifiToggle() then
+        return
+    end
+
+    NetworkMgr:queryNetworkState()
+    local complete_callback = function()
+        NetworkMgr:queryNetworkState()
+        if refresh_callback then
+            refresh_callback()
+        end
+    end
+    if NetworkMgr.is_wifi_on and NetworkMgr.is_connected then
+        NetworkMgr:toggleWifiOff(complete_callback, true)
+    elseif NetworkMgr.is_wifi_on then
+        NetworkMgr:promptWifi(complete_callback, nil, true)
+    else
+        NetworkMgr:toggleWifiOn(complete_callback, nil, true)
+    end
+end
+
+local function showWifiNetworks(refresh_callback)
+    if not Device:hasWifiToggle() then
+        return
+    end
+
+    NetworkMgr:queryNetworkState()
+    local complete_callback = function()
+        NetworkMgr:queryNetworkState()
+        if refresh_callback then
+            refresh_callback()
+        end
+    end
+    if NetworkMgr.is_wifi_on then
+        NetworkMgr.wifi_toggle_long_press = true
+        NetworkMgr:reconnectOrShowNetworkMenu(complete_callback, true)
+    else
+        NetworkMgr:toggleWifiOn(complete_callback, true, true)
+    end
+end
+
 local ModeLeftContainer = LeftContainer:extend{
     visible_func = nil,
 }
@@ -159,11 +262,26 @@ function MetadataTabsTitleBar:init()
     self.tab_padding_v = Screen:scaleBySize(5)
     self.tab_font_face = "smallinfofont"
     self.tab_font_size = 18
-    self.tab_underline_height = Size.line.thick
+    self.tab_underline_height = Size.line.thick * 2
+    self.status_padding_h = Screen:scaleBySize(7)
+    self.status_gap = Screen:scaleBySize(3)
     self.titlebar_height = self.icon_size + self.button_padding * 2
 
     self.file_manager = self.file_manager or FileManager.instance
     local file_manager = self.file_manager
+    local function measureTextWidth(candidates, padding_h)
+        local face = Font:getFace(self.tab_font_face, self.tab_font_size)
+        local width = 0
+        for _, text in ipairs(candidates) do
+            local widget = TextWidget:new{
+                text = text,
+                face = face,
+            }
+            width = math.max(width, widget:getSize().w)
+            widget:free()
+        end
+        return width + 2 * padding_h
+    end
     local function getTabWidth(text)
         local face = Font:getFace(self.tab_font_face, self.tab_font_size)
         local normal_widget = TextWidget:new{
@@ -227,6 +345,32 @@ function MetadataTabsTitleBar:init()
     self.series_button = self.series_tab.button
     self.authors_button = self.authors_tab.button
     self.tab_label_height = self.books_button.label_container.dimen.h
+    local function getStatusWidths()
+        local powerd = Device:getPowerDevice()
+        local max_level = Device:hasAuxBattery() and 200 or 100
+        local battery_candidates = {
+            max_level .. "%",
+        }
+        if Device:hasBattery() then
+            table.insert(battery_candidates, powerd:getBatterySymbol(true, false, 100) .. max_level .. "%")
+            table.insert(battery_candidates, powerd:getBatterySymbol(false, true, 100) .. max_level .. "%")
+            table.insert(battery_candidates, powerd:getBatterySymbol(false, false, 100) .. max_level .. "%")
+        end
+
+        local icon_width = measureTextWidth({
+            NIGHT_MODE_SYMBOL,
+            FRONTLIGHT_SYMBOL,
+            FRONTLIGHT_OFF_SYMBOL,
+            WIFI_ON_SYMBOL,
+            WIFI_OFF_SYMBOL,
+        }, self.status_padding_h)
+        return {
+            night_mode = icon_width,
+            frontlight = icon_width,
+            wifi = icon_width,
+            battery = measureTextWidth(battery_candidates, self.status_padding_h),
+        }
+    end
 
     self.tabs_group = HorizontalGroup:new{
         align = "bottom",
@@ -266,7 +410,127 @@ function MetadataTabsTitleBar:init()
     table.insert(self, self.tabs_container)
     self:updateSelectedTab(false)
 
-    self.back_title_width = self.width - (3 * self.icon_size + 2 * self.button_padding)
+    local status_widths = getStatusWidths()
+    self.night_mode_width = status_widths.night_mode
+    self.frontlight_width = status_widths.frontlight
+    self.wifi_width = status_widths.wifi
+    self.battery_width = status_widths.battery
+    self.status_width = self.night_mode_width + self.frontlight_width + self.wifi_width + self.battery_width + 3 * self.status_gap
+    self.night_mode_button = Button:new{
+        text = NIGHT_MODE_SYMBOL,
+        text_font_face = self.tab_font_face,
+        text_font_size = self.tab_font_size,
+        text_font_bold = false,
+        width = self.night_mode_width,
+        height = self.tab_label_height,
+        bordersize = 0,
+        padding_h = self.status_padding_h,
+        padding_v = self.tab_padding_v,
+        callback = function()
+            UIManager:broadcastEvent(Event:new("ToggleNightMode"))
+        end,
+        show_parent = self.show_parent,
+    }
+    self.frontlight_button = Button:new{
+        text = getFrontlightText(),
+        text_font_face = self.tab_font_face,
+        text_font_size = self.tab_font_size,
+        text_font_bold = false,
+        width = self.frontlight_width,
+        height = self.tab_label_height,
+        bordersize = 0,
+        padding_h = self.status_padding_h,
+        padding_v = self.tab_padding_v,
+        callback = function()
+            if Device:hasFrontlight() then
+                UIManager:broadcastEvent(Event:new("ShowFlDialog"))
+            end
+        end,
+        hold_callback = function()
+            if Device:hasFrontlight() then
+                UIManager:broadcastEvent(Event:new("ToggleFrontlight"))
+                self:refreshStatusIndicators()
+            end
+        end,
+        show_parent = self.show_parent,
+    }
+    self.wifi_button = Button:new{
+        text = getWifiText(),
+        text_font_face = self.tab_font_face,
+        text_font_size = self.tab_font_size,
+        text_font_bold = false,
+        width = self.wifi_width,
+        height = self.tab_label_height,
+        bordersize = 0,
+        padding_h = self.status_padding_h,
+        padding_v = self.tab_padding_v,
+        callback = function()
+            toggleWifi(function()
+                self:updateStatusIndicators()
+            end)
+        end,
+        hold_callback = function()
+            showWifiNetworks(function()
+                self:updateStatusIndicators()
+            end)
+        end,
+        show_parent = self.show_parent,
+    }
+    self.battery_button = Button:new{
+        text = getBatteryText(),
+        text_font_face = self.tab_font_face,
+        text_font_size = self.tab_font_size,
+        text_font_bold = false,
+        width = self.battery_width,
+        height = self.tab_label_height,
+        bordersize = 0,
+        padding_h = self.status_padding_h,
+        padding_v = self.tab_padding_v,
+        hold_callback = function()
+            showBatteryInfo()
+            self:updateStatusIndicators()
+        end,
+        show_parent = self.show_parent,
+    }
+    self.status_row = HorizontalGroup:new{
+        align = "bottom",
+        allow_mirroring = false,
+        self.night_mode_button,
+        HorizontalSpan:new{ width = self.status_gap },
+        self.frontlight_button,
+        HorizontalSpan:new{ width = self.status_gap },
+        self.wifi_button,
+        HorizontalSpan:new{ width = self.status_gap },
+        self.battery_button,
+    }
+    self.status_line = LineWidget:new{
+        style = "none",
+        dimen = Geom:new{ w = self.status_width, h = self.tab_underline_height },
+        background = Blitbuffer.COLOR_BLACK,
+    }
+    self.status_group = VerticalGroup:new{
+        align = "right",
+        self.status_row,
+        self.status_line,
+    }
+    self.status_stack = VerticalGroup:new{
+        align = "right",
+        VerticalSpan:new{ width = titlebar_body_height - tabs_size.h },
+        self.status_group,
+    }
+    self.status_container = RightContainer:new{
+        allow_mirroring = false,
+        dimen = Geom:new{
+            x = 0,
+            y = 0,
+            w = self.width,
+            h = titlebar_body_height,
+        },
+        self.status_stack,
+    }
+    table.insert(self, self.status_container)
+
+    self.back_title_width = self.width - self.status_width - self.tab_padding_h
     self.back_button = Button:new{
         text = "",
         align = "left",
@@ -335,20 +599,6 @@ function MetadataTabsTitleBar:init()
     table.insert(self, self.back_container)
     self:updateBackTitle(false)
 
-    self.right_button = IconButton:new{
-        icon = self.right_icon,
-        width = self.icon_size,
-        height = self.icon_size,
-        padding = self.button_padding,
-        padding_left = 2 * self.icon_size,
-        padding_bottom = self.icon_size,
-        overlap_align = "right",
-        callback = self.right_icon_tap_callback,
-        hold_callback = self.right_icon_hold_callback,
-        show_parent = self.show_parent,
-    }
-    table.insert(self, self.right_button)
-
     self.bottom_line = VerticalGroup:new{
         VerticalSpan:new{ width = titlebar_body_height },
         LineWidget:new{
@@ -396,6 +646,36 @@ function MetadataTabsTitleBar:onBackTitleTap()
     end
 end
 
+function MetadataTabsTitleBar:updateStatusIndicators(refresh)
+    if not self.battery_button then
+        return
+    end
+
+    local battery_text = getBatteryText()
+    local wifi_text = getWifiText()
+    local frontlight_text = getFrontlightText()
+    if self.battery_text == battery_text
+            and self.wifi_text == wifi_text
+            and self.frontlight_text == frontlight_text then
+        return
+    end
+
+    self.battery_text = battery_text
+    self.wifi_text = wifi_text
+    self.frontlight_text = frontlight_text
+    self.battery_button:setText(battery_text, self.battery_width)
+    self.wifi_button:setText(wifi_text, self.wifi_width)
+    self.frontlight_button:setText(frontlight_text, self.frontlight_width)
+    if refresh ~= false then
+        UIManager:setDirty(self.show_parent, "ui", self.dimen)
+    end
+end
+
+function MetadataTabsTitleBar:refreshStatusIndicators()
+    self:updateStatusIndicators(false)
+    UIManager:setDirty(self.show_parent, "ui", self.dimen)
+end
+
 function MetadataTabsTitleBar:setTabSelected(tab, selected)
     tab.line.style = selected and "solid" or "none"
     if tab.button.label_widget and tab.button.label_widget.bold ~= selected then
@@ -426,6 +706,7 @@ function MetadataTabsTitleBar:paintTo(bb, x, y)
     self.dimen.y = y
     self:updateBackTitle(false)
     self:updateSelectedTab(false)
+    self:updateStatusIndicators(false)
     OverlapGroup.paintTo(self, bb, x, y)
     if self.books_button and self.books_button[1] and self.books_button[1].dimen then
         self.left_button.image.dimen = self.books_button[1].dimen
@@ -442,16 +723,35 @@ end
 function MetadataTabsTitleBar:setSubTitle()
     self:updateBackTitle()
     self:updateSelectedTab()
+    self:updateStatusIndicators()
 end
 
 function MetadataTabsTitleBar:setLeftIcon()
 end
 
-function MetadataTabsTitleBar:setRightIcon(icon)
-    if self.right_button then
-        self.right_button:setIcon(icon, self.icon_size)
-        UIManager:setDirty(self.show_parent, "ui", self.dimen)
-    end
+function MetadataTabsTitleBar:setRightIcon()
+    self:updateStatusIndicators()
+end
+
+function MetadataTabsTitleBar:onNetworkConnected()
+    NetworkMgr:queryNetworkState()
+    self:updateStatusIndicators()
+end
+
+function MetadataTabsTitleBar:onNetworkDisconnected()
+    NetworkMgr:queryNetworkState()
+    self:updateStatusIndicators()
+end
+
+function MetadataTabsTitleBar:onNetworkDisconnecting()
+    NetworkMgr.is_wifi_on = false
+    self:updateStatusIndicators()
+end
+
+function MetadataTabsTitleBar:onFrontlightStateChanged()
+    self:refreshStatusIndicators()
+    UIManager:scheduleIn(0.2, self.refreshStatusIndicators, self)
+    UIManager:scheduleIn(1, self.refreshStatusIndicators, self)
 end
 
 function MetadataTabsTitleBar:generateHorizontalLayout()
@@ -461,7 +761,10 @@ function MetadataTabsTitleBar:generateHorizontalLayout()
             self.books_button,
             self.series_button,
             self.authors_button,
-            self.right_button,
+            self.night_mode_button,
+            self.frontlight_button,
+            self.wifi_button,
+            self.battery_button,
         },
     }
 end
@@ -472,7 +775,10 @@ function MetadataTabsTitleBar:generateVerticalLayout()
         { self.books_button },
         { self.series_button },
         { self.authors_button },
-        { self.right_button },
+        { self.night_mode_button },
+        { self.frontlight_button },
+        { self.wifi_button },
+        { self.battery_button },
     }
 end
 

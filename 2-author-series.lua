@@ -756,7 +756,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         local ty = target.dimen.y
         local tw = target.dimen.w
         local th = target.dimen.h
-        local line_w = math.max(2, Size.line.thin)
+        local line_w = math.max(3, Size.line.medium)
         local line_h1 = math.floor(th * 0.95)
         local line_h2 = math.floor(th * 0.90)
         local line_gap = Screen:scaleBySize(3)

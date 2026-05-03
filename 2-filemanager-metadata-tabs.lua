@@ -2,7 +2,6 @@
 -- Version: 1.0.0
 -- Adds Books / Series / Authors tabs to the file manager title bar.
 
-local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
 local Device = require("device")
 local Event = require("ui/event")
@@ -14,12 +13,10 @@ local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local InfoMessage = require("ui/widget/infomessage")
 local LeftContainer = require("ui/widget/container/leftcontainer")
-local LineWidget = require("ui/widget/linewidget")
 local NetworkMgr = require("ui/network/manager")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local PluginLoader = require("pluginloader")
 local RightContainer = require("ui/widget/container/rightcontainer")
-local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
@@ -262,9 +259,8 @@ function MetadataTabsTitleBar:init()
     self.tab_padding_v = Screen:scaleBySize(5)
     self.tab_font_face = "smallinfofont"
     self.tab_font_size = 18
-    self.tab_underline_height = Size.line.thick * 2
     self.status_padding_h = Screen:scaleBySize(7)
-    self.status_gap = Screen:scaleBySize(3)
+    self.status_gap = self.tab_padding_h
     self.titlebar_height = self.icon_size + self.button_padding * 2
 
     self.file_manager = self.file_manager or FileManager.instance
@@ -314,19 +310,12 @@ function MetadataTabsTitleBar:init()
             hold_callback = hold_callback,
             show_parent = self.show_parent,
         }
-        local line = LineWidget:new{
-            style = "none",
-            dimen = Geom:new{ w = tab_width, h = self.tab_underline_height },
-            background = Blitbuffer.COLOR_BLACK,
-        }
         local tab = VerticalGroup:new{
             align = "center",
             button,
-            line,
         }
         tab.key = key
         tab.button = button
-        tab.line = line
         return tab
     end
 
@@ -492,30 +481,25 @@ function MetadataTabsTitleBar:init()
         end,
         show_parent = self.show_parent,
     }
-    self.status_row = HorizontalGroup:new{
+    local status_row_items = {
         align = "bottom",
         allow_mirroring = false,
-        self.night_mode_button,
-        HorizontalSpan:new{ width = self.status_gap },
-        self.frontlight_button,
-        HorizontalSpan:new{ width = self.status_gap },
-        self.wifi_button,
-        HorizontalSpan:new{ width = self.status_gap },
-        self.battery_button,
     }
-    self.status_line = LineWidget:new{
-        style = "none",
-        dimen = Geom:new{ w = self.status_width, h = self.tab_underline_height },
-        background = Blitbuffer.COLOR_BLACK,
-    }
+    table.insert(status_row_items, self.night_mode_button)
+    table.insert(status_row_items, HorizontalSpan:new{ width = self.status_gap })
+    table.insert(status_row_items, self.frontlight_button)
+    table.insert(status_row_items, HorizontalSpan:new{ width = self.status_gap })
+    table.insert(status_row_items, self.wifi_button)
+    table.insert(status_row_items, HorizontalSpan:new{ width = self.status_gap })
+    table.insert(status_row_items, self.battery_button)
+    self.status_row = HorizontalGroup:new(status_row_items)
     self.status_group = VerticalGroup:new{
         align = "right",
         self.status_row,
-        self.status_line,
     }
     self.status_stack = VerticalGroup:new{
         align = "right",
-        VerticalSpan:new{ width = titlebar_body_height - tabs_size.h },
+        VerticalSpan:new{ width = math.max(0, titlebar_body_height - self.status_group:getSize().h) },
         self.status_group,
     }
     self.status_container = RightContainer:new{
@@ -537,6 +521,7 @@ function MetadataTabsTitleBar:init()
         text_font_face = self.tab_font_face,
         text_font_size = self.tab_font_size,
         text_font_bold = true,
+        avoid_text_truncation = false,
         width = self.back_title_width,
         height = self.tab_label_height,
         bordersize = 0,
@@ -568,19 +553,13 @@ function MetadataTabsTitleBar:init()
         self.back_chevron_button,
         self.back_button,
     }
-    self.back_title_line = LineWidget:new{
-        style = "none",
-        dimen = Geom:new{ w = self.back_title_width, h = self.tab_underline_height },
-        background = Blitbuffer.COLOR_BLACK,
-    }
     self.back_title_group = VerticalGroup:new{
         align = "left",
         self.back_row,
-        self.back_title_line,
     }
     self.back_stack = VerticalGroup:new{
         align = "left",
-        VerticalSpan:new{ width = titlebar_body_height - tabs_size.h },
+        VerticalSpan:new{ width = math.max(0, titlebar_body_height - self.back_title_group:getSize().h) },
         self.back_title_group,
     }
     self.back_container = ModeLeftContainer:new{
@@ -599,15 +578,6 @@ function MetadataTabsTitleBar:init()
     table.insert(self, self.back_container)
     self:updateBackTitle(false)
 
-    self.bottom_line = VerticalGroup:new{
-        VerticalSpan:new{ width = titlebar_body_height },
-        LineWidget:new{
-            dimen = Geom:new{ w = self.width, h = Size.line.thin },
-            background = Blitbuffer.COLOR_BLACK,
-        },
-    }
-    table.insert(self, self.bottom_line)
-    self.titlebar_height = self.titlebar_height + Size.line.thin
     self.dimen.h = self.titlebar_height
 
     -- Compatibility for callers that anchor popups on title_bar.left_button.image.dimen.
@@ -677,10 +647,10 @@ function MetadataTabsTitleBar:refreshStatusIndicators()
 end
 
 function MetadataTabsTitleBar:setTabSelected(tab, selected)
-    tab.line.style = selected and "solid" or "none"
-    if tab.button.label_widget and tab.button.label_widget.bold ~= selected then
-        tab.button.label_widget.bold = selected
+    if tab.button.text_font_bold ~= selected then
+        tab.button.text_font_bold = selected
         tab.button.label_widget:free()
+        tab.button:init()
     end
 end
 
@@ -755,31 +725,33 @@ function MetadataTabsTitleBar:onFrontlightStateChanged()
 end
 
 function MetadataTabsTitleBar:generateHorizontalLayout()
+    local row = {
+        self.back_button,
+        self.books_button,
+        self.series_button,
+        self.authors_button,
+    }
+    table.insert(row, self.night_mode_button)
+    table.insert(row, self.frontlight_button)
+    table.insert(row, self.wifi_button)
+    table.insert(row, self.battery_button)
     return {
-        {
-            self.back_button,
-            self.books_button,
-            self.series_button,
-            self.authors_button,
-            self.night_mode_button,
-            self.frontlight_button,
-            self.wifi_button,
-            self.battery_button,
-        },
+        row,
     }
 end
 
 function MetadataTabsTitleBar:generateVerticalLayout()
-    return {
+    local layout = {
         { self.back_button },
         { self.books_button },
         { self.series_button },
         { self.authors_button },
-        { self.night_mode_button },
-        { self.frontlight_button },
-        { self.wifi_button },
-        { self.battery_button },
     }
+    table.insert(layout, { self.night_mode_button })
+    table.insert(layout, { self.frontlight_button })
+    table.insert(layout, { self.wifi_button })
+    table.insert(layout, { self.battery_button })
+    return layout
 end
 
 local function findTitleBarUpvalue(func, seen)

@@ -2,7 +2,9 @@
 -- Version: 1.0.0
 -- Adds Books / Series / Authors tabs to the file manager title bar.
 
+local userpatch = require("userpatch")
 local Button = require("ui/widget/button")
+local DataStorage = require("datastorage")
 local Device = require("device")
 local Event = require("ui/event")
 local FileManager = require("apps/filemanager/filemanager")
@@ -23,6 +25,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local _ = require("gettext")
 local Screen = Device.screen
+local Size = require("ui/size")
 
 local DGENERIC_ICON_SIZE = G_defaults:readSetting("DGENERIC_ICON_SIZE")
 local VIRTUAL_ROOT_SYMBOL = "\u{e257}"
@@ -34,6 +37,39 @@ local FRONTLIGHT_SYMBOL = "☼"
 local FRONTLIGHT_OFF_SYMBOL = "☀"
 local WIFI_ON_SYMBOL = ""
 local WIFI_OFF_SYMBOL = ""
+local DEBUG_LOG_PATH = DataStorage:getSettingsDir() .. "/metadata-tabs-debug.log"
+
+local function debugLog(...)
+    local file = io.open(DEBUG_LOG_PATH, "a")
+    if not file then
+        return
+    end
+    local parts = { os.date("!%Y-%m-%dT%H:%M:%SZ") }
+    for i = 1, select("#", ...) do
+        table.insert(parts, tostring(select(i, ...)))
+    end
+    file:write(table.concat(parts, "\t"), "\n")
+    file:close()
+end
+
+local function debugLogItemTable(label, path, item_table)
+    debugLog(label, "path", path, "count", item_table and #item_table or "nil")
+    if not item_table then
+        return
+    end
+    for i, item in ipairs(item_table) do
+        debugLog(
+            label .. ".item",
+            i,
+            "idx", item.idx,
+            "text", item.text,
+            "path", item.path,
+            "is_file", item.is_file,
+            "is_go_up", item.is_go_up,
+            "virtual", item.is_virtual_metadata_leaf
+        )
+    end
+end
 
 local function findVirtualRoot(path)
     if path then
@@ -792,14 +828,103 @@ FileChooser.genItemTable = function(self, dirs, files, path)
     local item_table = FileChooser_genItemTable(self, dirs, files, path)
     local leaf_info = getMetadataLeafInfo(path)
     if leaf_info then
+        debugLogItemTable("tabs.genItemTable.before_remove_up", path, item_table)
         local first_item = item_table[1]
         if first_item and first_item.is_go_up and first_item.path == leaf_info.parent_path then
             table.remove(item_table, 1)
             self.path_items[path] = nil
         end
+        debugLogItemTable("tabs.genItemTable.after_remove_up", path, item_table)
     end
     return item_table
 end
+
+userpatch.registerPatchPluginFunc("coverbrowser", function()
+    local BookInfoManager = require("bookinfomanager")
+    local FileChooser__updateItemsBuildUI = FileChooser._updateItemsBuildUI
+    if not FileChooser__updateItemsBuildUI then
+        debugLog("tabs.coverbrowser.no_updateItemsBuildUI")
+        return
+    end
+
+    local function needsCoverExtraction(filepath, cover_specs)
+        local bookinfo = BookInfoManager:getBookInfo(filepath, false)
+        if not bookinfo then
+            return true
+        end
+        if bookinfo.ignore_cover then
+            return false
+        end
+        if not bookinfo.cover_fetched then
+            return true
+        end
+        return bookinfo.has_cover and BookInfoManager.isCachedCoverInvalid(bookinfo, cover_specs)
+    end
+
+    local function extractVisibleLeafCovers(file_chooser)
+        if not getMetadataLeafInfo(file_chooser.path) then
+            return
+        end
+        if not file_chooser._do_cover_images or not file_chooser.item_width or not file_chooser.item_height then
+            return
+        end
+
+        local cover_specs = {
+            max_cover_w = file_chooser.item_width - 2 * Size.border.thin,
+            max_cover_h = file_chooser.item_height - 2 * Size.border.thin,
+        }
+        local idx_offset = (file_chooser.page - 1) * file_chooser.perpage
+        for idx = 1, file_chooser.perpage do
+            local item = file_chooser.item_table[idx_offset + idx]
+            if not item then
+                break
+            end
+            if item.is_file and item.path and needsCoverExtraction(item.path, cover_specs) then
+                debugLog("tabs.coverbrowser.extract_visible", "path", file_chooser.path, "idx", idx_offset + idx, "file", item.path)
+                BookInfoManager:extractBookInfo(item.path, cover_specs)
+            end
+        end
+    end
+
+    FileChooser._updateItemsBuildUI = function(self, ...)
+        local leaf_info = getMetadataLeafInfo(self.path)
+        if leaf_info then
+            debugLogItemTable("tabs.coverbrowser.before_build_ui", self.path, self.item_table)
+            extractVisibleLeafCovers(self)
+        end
+        local result = FileChooser__updateItemsBuildUI(self, ...)
+        if leaf_info then
+            debugLog(
+                "tabs.coverbrowser.after_build_ui",
+                "path", self.path,
+                "item_group", self.item_group and #self.item_group,
+                "layout", self.layout and #self.layout,
+                "items_to_update", self.items_to_update and #self.items_to_update,
+                "page", self.page,
+                "perpage", self.perpage
+            )
+            if self.layout then
+                for row_idx, row in ipairs(self.layout) do
+                    for col_idx, widget in ipairs(row) do
+                        local entry = widget.entry
+                        debugLog(
+                            "tabs.coverbrowser.layout",
+                            "row", row_idx,
+                            "col", col_idx,
+                            "entry_idx", entry and entry.idx,
+                            "text", entry and entry.text,
+                            "path", entry and entry.path,
+                            "bookinfo_found", widget.bookinfo_found,
+                            "is_directory", widget.is_directory,
+                            "filepath", widget.filepath
+                        )
+                    end
+                end
+            end
+        end
+        return result
+    end
+end)
 
 local FileManager_setupLayout = FileManager.setupLayout
 FileManager.setupLayout = function(self, ...)

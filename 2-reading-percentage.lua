@@ -1,12 +1,13 @@
 -- File browser reading percentage badge
--- Version: 1.0.4
+-- Version: 1.0.5
 -- Updates: https://github.com/quanganhdo/koreader-user-patches
 -- Changelog:
+-- * 1.0.5: move finished-book badge and dogear hiding to 2-finished-badge.lua
 -- * 1.0.4: added the finished-book checkmark badge and refined badge styling
 -- * 1.0.3: initial release
 local userpatch = require("userpatch")
 
-userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
+userpatch.registerPatchPluginFunc("coverbrowser", function()
     local BD = require("ui/bidi")
     local Blitbuffer = require("ffi/blitbuffer")
     local Device = require("device")
@@ -14,16 +15,11 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
     local Geom = require("ui/geometry")
     local MosaicMenu = require("mosaicmenu")
     local MosaicMenuItem = userpatch.getUpValue(MosaicMenu._updateItemsBuildUI, "MosaicMenuItem")
-    local FileChooser = require("ui/widget/filechooser")
-    local FrameContainer = require("ui/widget/container/framecontainer")
-    local CenterContainer = require("ui/widget/container/centercontainer")
-    local Size = require("ui/size")
     local TextWidget = require("ui/widget/textwidget")
     local Screen = Device.screen
 
     local percentage_badge_cache = {}
     local percentage_face = Font:getFace("infont", 13)
-    local complete_badge
 
     local function getReadingPercentageText(percent_finished)
         local percent = math.floor((percent_finished or 0) * 100 + 0.5)
@@ -73,42 +69,6 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         badge.text_widget:paintTo(bb, text_x, text_y)
     end
 
-    local function getCompleteBadge()
-        if complete_badge then
-            return complete_badge
-        end
-
-        local text_widget = TextWidget:new{
-            text = "\u{2713}",
-            face = percentage_face,
-            fgcolor = Blitbuffer.COLOR_WHITE,
-        }
-        local text_size = text_widget:getSize()
-        local padding = Screen:scaleBySize(3)
-        local inner_side = math.max(text_size.w, text_size.h)
-        complete_badge = FrameContainer:new{
-            margin = 0,
-            padding = padding,
-            bordersize = math.max(1, Size.line.thin),
-            color = Blitbuffer.COLOR_WHITE,
-            radius = math.floor((inner_side + padding * 2) / 2) + 1,
-            background = Blitbuffer.COLOR_BLACK,
-            CenterContainer:new{
-                dimen = Geom:new{ w = inner_side, h = inner_side },
-                text_widget,
-            },
-        }
-        return complete_badge
-    end
-
-    local original_setupFileManagerDisplayMode = CoverBrowser.setupFileManagerDisplayMode
-    function CoverBrowser.setupFileManagerDisplayMode(...)
-        original_setupFileManagerDisplayMode(...)
-        FileChooser._do_hint_opened = false
-    end
-
-    FileChooser._do_hint_opened = false
-
     local original_MosaicMenuItem_paintTo = MosaicMenuItem.paintTo
     function MosaicMenuItem:paintTo(bb, x, y)
         original_MosaicMenuItem_paintTo(self, bb, x, y)
@@ -122,7 +82,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         if self.status == "abandoned" then
             return
         end
-        if self.status ~= "complete" and not self.percent_finished then
+        if self.status == "complete" or not self.percent_finished then
             return
         end
 
@@ -140,18 +100,6 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
             badge_x = target.dimen.x + target.dimen.w - badge_size.w - Screen:scaleBySize(5)
         end
         local badge_y = target.dimen.y
-        if self.status == "complete" then
-            badge = getCompleteBadge()
-            badge_size = badge:getSize()
-            if BD.mirroredUILayout() then
-                badge_x = target.dimen.x + Screen:scaleBySize(5)
-            else
-                badge_x = target.dimen.x + target.dimen.w - badge_size.w - Screen:scaleBySize(5)
-            end
-            badge_y = target.dimen.y + target.dimen.h - badge_size.h - Screen:scaleBySize(5)
-            badge:paintTo(bb, badge_x, badge_y)
-        else
-            paintReadingPercentageBadge(bb, badge_x, badge_y, badge)
-        end
+        paintReadingPercentageBadge(bb, badge_x, badge_y, badge)
     end
 end)

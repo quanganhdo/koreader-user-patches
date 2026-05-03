@@ -841,10 +841,36 @@ end
 
 userpatch.registerPatchPluginFunc("coverbrowser", function()
     local BookInfoManager = require("bookinfomanager")
+    local FFIUtil = require("ffi/util")
     local FileChooser__updateItemsBuildUI = FileChooser._updateItemsBuildUI
     if not FileChooser__updateItemsBuildUI then
         debugLog("tabs.coverbrowser.no_updateItemsBuildUI")
         return
+    end
+
+    local LOADING_TOAST_DELAY_S = 0.25
+
+    local function maybeShowLoadingToast(state)
+        if state.info then
+            return
+        end
+        if FFIUtil.getTimestamp() - state.started_at < LOADING_TOAST_DELAY_S then
+            return
+        end
+        state.info = InfoMessage:new{
+            text = _("Loading covers…"),
+            dismissable = false,
+            flush_events_on_show = true,
+        }
+        UIManager:show(state.info)
+        UIManager:forceRePaint()
+    end
+
+    local function closeLoadingToast(state)
+        if state.info then
+            UIManager:close(state.info)
+            state.info = nil
+        end
     end
 
     local function needsCoverExtraction(filepath, cover_specs)
@@ -873,6 +899,10 @@ userpatch.registerPatchPluginFunc("coverbrowser", function()
             max_cover_w = file_chooser.item_width - 2 * Size.border.thin,
             max_cover_h = file_chooser.item_height - 2 * Size.border.thin,
         }
+        local loading_state = {
+            started_at = FFIUtil.getTimestamp(),
+            info = nil,
+        }
         local idx_offset = (file_chooser.page - 1) * file_chooser.perpage
         for idx = 1, file_chooser.perpage do
             local item = file_chooser.item_table[idx_offset + idx]
@@ -880,10 +910,12 @@ userpatch.registerPatchPluginFunc("coverbrowser", function()
                 break
             end
             if item.is_file and item.path and needsCoverExtraction(item.path, cover_specs) then
+                maybeShowLoadingToast(loading_state)
                 debugLog("tabs.coverbrowser.extract_visible", "path", file_chooser.path, "idx", idx_offset + idx, "file", item.path)
                 BookInfoManager:extractBookInfo(item.path, cover_specs)
             end
         end
+        closeLoadingToast(loading_state)
     end
 
     FileChooser._updateItemsBuildUI = function(self, ...)

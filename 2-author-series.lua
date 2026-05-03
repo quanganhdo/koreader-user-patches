@@ -864,17 +864,19 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         local ty = target.dimen.y
         local tw = target.dimen.w
         local th = target.dimen.h
-        local line_w = math.max(3, Size.line.medium)
-        local line_h1 = math.floor(th * 0.95)
-        local line_h2 = math.floor(th * 0.90)
-        local line_gap = Screen:scaleBySize(3)
-        local line_x1 = tx + tw + line_gap
-        local line_x2 = line_x1 + line_w + line_gap
-        local line_y1 = ty + math.floor((th - line_h1) / 2)
-        local line_y2 = ty + math.floor((th - line_h2) / 2)
-        bb:paintRect(line_x1, line_y1, line_w, line_h1, Blitbuffer.COLOR_GRAY_9)
-        bb:paintRect(line_x2, line_y2, line_w, line_h2, Blitbuffer.COLOR_GRAY_9)
-        paintVirtualLeafTitleOverlay(item, bb, tx, ty, tw, th, target.bordersize)
+        if item._has_cover_image then
+            local line_w = math.max(3, Size.line.medium)
+            local line_h1 = math.floor(th * 0.95)
+            local line_h2 = math.floor(th * 0.90)
+            local line_gap = Screen:scaleBySize(3)
+            local line_x1 = tx + tw + line_gap
+            local line_x2 = line_x1 + line_w + line_gap
+            local line_y1 = ty + math.floor((th - line_h1) / 2)
+            local line_y2 = ty + math.floor((th - line_h2) / 2)
+            bb:paintRect(line_x1, line_y1, line_w, line_h1, Blitbuffer.COLOR_GRAY_9)
+            bb:paintRect(line_x2, line_y2, line_w, line_h2, Blitbuffer.COLOR_GRAY_9)
+            paintVirtualLeafTitleOverlay(item, bb, tx, ty, tw, th, target.bordersize)
+        end
 
         local badge = getVirtualLeafBadge(item.entry.virtual_leaf_count)
         local badge_size = badge:getSize()
@@ -968,23 +970,31 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         paintSeriesIndexBadge(bb, badge_x, badge_y, badge)
     end
 
-    local function withRepresentativeFileEntry(item, update_func, ...)
+    local function withRepresentativeFileEntry(item, update_func, suppress_text, ...)
         if not item.entry or not item.entry.is_virtual_metadata_leaf or not item.entry.representative_filepath then
             return update_func(item, ...)
         end
 
         local original_entry_file = item.entry.file
         local original_entry_is_file = item.entry.is_file
+        local original_text = item.text
         item.entry.file = item.entry.representative_filepath
         item.entry.is_file = true
         item.filepath = item.entry.representative_filepath
         item.is_virtual_metadata_leaf = true
         item.do_hint_opened = false
+        item._has_cover_image = nil
+        if suppress_text then
+            item.text = ""
+        else
+            item.text = item.text:gsub("/$", "")
+        end
 
         local results = table.pack(update_func(item, ...))
 
         item.entry.file = original_entry_file
         item.entry.is_file = original_entry_is_file
+        item.text = original_text
         item.do_hint_opened = false
         item.been_opened = false
         item.status = nil
@@ -994,7 +1004,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
 
     local MosaicMenuItem_update = MosaicMenuItem.update
     function MosaicMenuItem:update(...)
-        return withRepresentativeFileEntry(self, MosaicMenuItem_update, ...)
+        return withRepresentativeFileEntry(self, MosaicMenuItem_update, false, ...)
     end
 
     local MosaicMenuItem_paintTo = MosaicMenuItem.paintTo
@@ -1006,7 +1016,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
 
     local ListMenuItem_update = ListMenuItem.update
     function ListMenuItem:update(...)
-        return withRepresentativeFileEntry(self, ListMenuItem_update, ...)
+        return withRepresentativeFileEntry(self, ListMenuItem_update, false, ...)
     end
 end)
 

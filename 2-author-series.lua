@@ -459,6 +459,9 @@ function FileChooser:getVirtualList(path, collate)
             local attributes = lfs.attributes(fullpath)
             if attributes and attributes.mode == "file" and self:show_file(f, fullpath) then
                 local item = self:getListItem(path, f, fullpath, attributes, collate)
+                if getVirtualLeafSortMode(filters) == "series" and v.series_index then
+                    item.virtual_series_index = v.series_index
+                end
                 table.insert(files, item)
             end
         end
@@ -885,6 +888,86 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
         badge:paintTo(bb, badge_x, badge_y)
     end
 
+    local series_index_badge_cache = {}
+    local series_index_face = Font:getFace("infont", 13)
+    local series_index_badge_height
+
+    local function getSeriesIndexBadgeHeight()
+        if series_index_badge_height then
+            return series_index_badge_height
+        end
+
+        local check_widget = TextWidget:new{
+            text = "\u{2713}",
+            face = series_index_face,
+            fgcolor = Blitbuffer.COLOR_WHITE,
+        }
+        local check_size = check_widget:getSize()
+        check_widget:free()
+        local padding = Screen:scaleBySize(3)
+        local border = math.max(1, Size.line.thin)
+        series_index_badge_height = math.max(check_size.w, check_size.h) + 2 * padding + 2 * border
+        return series_index_badge_height
+    end
+
+    local function getSeriesIndexBadge(series_index)
+        local text = tostring(series_index)
+        if series_index_badge_cache[text] then
+            return series_index_badge_cache[text]
+        end
+
+        local text_widget = TextWidget:new{
+            text = text,
+            face = series_index_face,
+            fgcolor = Blitbuffer.COLOR_WHITE,
+        }
+        local text_size = text_widget:getSize()
+        local border = math.max(1, Size.line.thin)
+        local padding_h = Screen:scaleBySize(4)
+        local height = getSeriesIndexBadgeHeight()
+        local width = math.max(height, text_size.w + 2 * padding_h + 2 * border)
+        local badge = {
+            text_widget = text_widget,
+            text_size = text_size,
+            width = width,
+            height = height,
+            border = border,
+        }
+        function badge:getSize()
+            return Geom:new{ w = self.width, h = self.height }
+        end
+        series_index_badge_cache[text] = badge
+        return badge
+    end
+
+    local function paintSeriesIndexBadge(bb, x, y, badge)
+        bb:paintRect(x, y, badge.width, badge.height, Blitbuffer.COLOR_BLACK)
+        bb:paintBorder(x, y, badge.width, badge.height, badge.border, Blitbuffer.COLOR_WHITE)
+        local text_x = x + math.floor((badge.width - badge.text_size.w) / 2)
+        local text_y = y + math.floor((badge.height - badge.text_size.h) / 2)
+        badge.text_widget:paintTo(bb, text_x, text_y)
+    end
+
+    local function paintVirtualSeriesIndexBadge(item, bb)
+        if not item.entry or item.entry.virtual_series_index == nil then
+            return
+        end
+        local target = item[1] and item[1][1] and item[1][1][1]
+        if not target or not target.dimen then
+            return
+        end
+
+        local badge = getSeriesIndexBadge(item.entry.virtual_series_index)
+        local badge_y = target.dimen.y + target.dimen.h - badge.height - Screen:scaleBySize(5)
+        local badge_x
+        if BD.mirroredUILayout() then
+            badge_x = target.dimen.x + target.dimen.w - badge.width - Screen:scaleBySize(5)
+        else
+            badge_x = target.dimen.x + Screen:scaleBySize(5)
+        end
+        paintSeriesIndexBadge(bb, badge_x, badge_y, badge)
+    end
+
     local function withRepresentativeFileEntry(item, update_func, ...)
         if not item.entry or not item.entry.is_virtual_metadata_leaf or not item.entry.representative_filepath then
             return update_func(item, ...)
@@ -918,6 +1001,7 @@ userpatch.registerPatchPluginFunc("coverbrowser", function(CoverBrowser)
     function MosaicMenuItem:paintTo(bb, x, y)
         MosaicMenuItem_paintTo(self, bb, x, y)
         paintVirtualLeafFolderDecoration(self, bb)
+        paintVirtualSeriesIndexBadge(self, bb)
     end
 
     local ListMenuItem_update = ListMenuItem.update

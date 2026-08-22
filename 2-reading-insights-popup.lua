@@ -5,9 +5,10 @@ Controls: Any key to dismiss; Prev/Next to navigate years; Center D-pad to toggl
 Tap left yearly value to switch days/hours
 Tap right yearly value or monthly bars to open book list
 Tap monthly header to switch days/hours
-Version: 1.0.4
+Version: 1.0.5
 Updates: https://github.com/quanganhdo/koreader-user-patches
 Changelog:
+* 1.0.5: invalidate cached insights after reading statistics sync changes
 * 1.0.4: version bump
 * 1.0.3: added cached insights aggregates and modal book lists
 * 1.0.2: added keyboard navigation, hour display mode, and File Manager availability
@@ -213,7 +214,7 @@ local MONTH_NAMES_FULL = {
 
 local db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
 local cache_path = DataStorage:getSettingsDir() .. "/reading_insights_cache.lua"
-local CACHE_SCHEMA_VERSION = 1
+local CACHE_SCHEMA_VERSION = 2
 local ReadingInsightsPopup
 
 local INSIGHTS_MODE_KEY = "reading_insights_popup_mode"
@@ -257,6 +258,43 @@ local function withStatsDb(fallback, fn)
     return fallback
 end
 
+local withStatement
+
+function withStatement(conn, sql, fn)
+    local stmt = conn:prepare(sql)
+    if not stmt then return end
+    local ok, result = pcall(fn, stmt)
+    stmt:close()
+    if ok then
+        return result
+    end
+end
+
+local function getStatsFingerprint()
+    return withStatsDb("0:0:0:0", function(conn)
+        local fingerprint = "0:0:0:0"
+        local sql = [[
+            SELECT COUNT(*),
+                   MAX(start_time),
+                   SUM(start_time),
+                   SUM(duration)
+            FROM page_stat_data
+        ]]
+        withStatement(conn, sql, function(stmt)
+            for row in stmt:rows() do
+                fingerprint = string.format(
+                    "%d:%d:%d:%d",
+                    tonumber(row[1]) or 0,
+                    tonumber(row[2]) or 0,
+                    tonumber(row[3]) or 0,
+                    tonumber(row[4]) or 0
+                )
+            end
+        end)
+        return fingerprint
+    end)
+end
+
 local function getLastReadTimestamp()
     return withStatsDb(0, function(conn)
         local last_ts = 0
@@ -295,16 +333,6 @@ local function buildMonthlyData(year, values, value_key)
         })
     end
     return months
-end
-
-local function withStatement(conn, sql, fn)
-    local stmt = conn:prepare(sql)
-    if not stmt then return end
-    local ok, result = pcall(fn, stmt)
-    stmt:close()
-    if ok then
-        return result
-    end
 end
 
 local function computeStreaks(entries_desc, is_consecutive, is_current_start)
@@ -1311,19 +1339,22 @@ function ReadingInsightsPopup:init()
     local last_read_ts = getLastReadTimestamp()
     local last_read_day = last_read_ts > 0 and os.date("%Y-%m-%d", last_read_ts) or nil
     local last_read_year = last_read_ts > 0 and tonumber(os.date("%Y", last_read_ts)) or nil
+    local stats_fingerprint = getStatsFingerprint()
     local cached_last_read_ts = cache:readSetting("last_read_ts")
     local cached_last_read_day = cache:readSetting("last_read_day")
     local cached_last_read_year = cache:readSetting("last_read_year")
+    local cached_stats_fingerprint = cache:readSetting("stats_fingerprint")
+    local stats_changed = cached_stats_fingerprint ~= stats_fingerprint
 
     local streaks = cache:readSetting("streaks")
-    if not streaks or cached_last_read_day ~= last_read_day then
+    if not streaks or cached_last_read_day ~= last_read_day or stats_changed then
         streaks = self:calculateStreaks()
         cache.data.streaks = streaks
         cache_dirty = true
     end
 
     local year_range = cache:readSetting("year_range")
-    if not year_range or cached_last_read_year ~= last_read_year then
+    if not year_range or cached_last_read_year ~= last_read_year or stats_changed then
         year_range = self:getYearRange()
         cache.data.year_range = year_range
         cache_dirty = true
@@ -1349,11 +1380,21 @@ function ReadingInsightsPopup:init()
     if type(monthly_data_cache.hours) ~= "table" then
         monthly_data_cache.hours = {}
     end
+    if stats_changed then
+        yearly_stats_cache = {}
+        monthly_data_cache = {
+            days = {},
+            hours = {},
+        }
+        cache.data.yearly_stats = yearly_stats_cache
+        cache.data.monthly_data = monthly_data_cache
+        cache_dirty = true
+    end
 
     local selected_year_key = tostring(self.selected_year)
     local refresh_current_year = last_read_year
         and self.selected_year == last_read_year
-        and cached_last_read_ts ~= last_read_ts
+        and (cached_last_read_ts ~= last_read_ts or stats_changed)
 
     if not yearly_stats_cache[selected_year_key] or refresh_current_year then
         yearly_stats_cache[selected_year_key] = self:getYearlyStats(self.selected_year)
@@ -1366,7 +1407,8 @@ function ReadingInsightsPopup:init()
     local monthly_by_mode = monthly_data_cache[mode_key]
     local refresh_monthly = last_read_year
         and self.selected_year == last_read_year
-        and ((self.mode == INSIGHTS_MODE_HOURS and cached_last_read_ts ~= last_read_ts)
+        and (stats_changed
+            or (self.mode == INSIGHTS_MODE_HOURS and cached_last_read_ts ~= last_read_ts)
             or (self.mode ~= INSIGHTS_MODE_HOURS and cached_last_read_day ~= last_read_day))
 
     local monthly_values = monthly_by_mode[selected_year_key]
@@ -1388,10 +1430,12 @@ function ReadingInsightsPopup:init()
 
     if cached_last_read_ts ~= last_read_ts
         or cached_last_read_day ~= last_read_day
-        or cached_last_read_year ~= last_read_year then
+        or cached_last_read_year ~= last_read_year
+        or cached_stats_fingerprint ~= stats_fingerprint then
         cache.data.last_read_ts = last_read_ts
         cache.data.last_read_day = last_read_day
         cache.data.last_read_year = last_read_year
+        cache.data.stats_fingerprint = stats_fingerprint
         cache_dirty = true
     end
 

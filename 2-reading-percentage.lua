@@ -1,7 +1,8 @@
 -- File browser reading percentage badge
--- Version: 1.0.5
+-- Version: 1.1.0
 -- Updates: https://github.com/quanganhdo/koreader-user-patches
 -- Changelog:
+-- * 1.1.0: synchronized patch-set version
 -- * 1.0.5: move finished-book badge and dogear hiding to 2-finished-badge.lua
 -- * 1.0.4: added the finished-book checkmark badge and refined badge styling
 -- * 1.0.3: initial release

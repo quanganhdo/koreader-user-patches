@@ -5,7 +5,7 @@ Shows: This Chapter (time left), Next Chapter (time), This Book (progress, pages
 Version: 1.1.0
 Updates: https://github.com/quanganhdo/koreader-user-patches
 Changelog:
-* 1.1.0: added anchored-popup API and one-tap toolbar switching for compatible reader overlays
+* 1.1.0: added anchored-popup API, overlay callback hooks, and localized popup close repaint
 * 1.0.4: version bump
 * 1.0.2: added keyboard navigation support
 * 1.0.1: added l10n support and aligned calculations with stock behavior
@@ -791,7 +791,9 @@ function ReadingStatsPopup:onCloseWidget()
     if self.close_callback and not self.suppress_close_callback then
         self.close_callback()
     end
-    UIManager:setDirty(nil, "ui")
+    UIManager:setDirty(nil, function()
+        return "ui", self.popup_frame.dimen
+    end)
 end
 
 ReaderUI.reading_stats_popup_patch_version = PATCH_VERSION

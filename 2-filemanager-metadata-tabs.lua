@@ -1,6 +1,8 @@
 -- File browser metadata tabs title bar
--- Version: 1.0.0
+-- Version: 1.1.0
 -- Adds Books / Series / Authors tabs to the file manager title bar.
+-- Changelog:
+-- * 1.1.0: localized title-bar repaints and synchronized patch-set version
 
 local userpatch = require("userpatch")
 local Button = require("ui/widget/button")
@@ -285,6 +287,34 @@ local MetadataTabsTitleBar = OverlapGroup:extend{
     right_icon_tap_callback = function() end,
     right_icon_hold_callback = function() end,
 }
+
+local function widgetBounds(widgets)
+    local left, top, right, bottom
+    for _, widget in ipairs(widgets) do
+        local dimen = widget and widget.dimen
+        if dimen and dimen.x and dimen.y then
+            left = math.min(left or dimen.x, dimen.x)
+            top = math.min(top or dimen.y, dimen.y)
+            right = math.max(right or dimen.x + dimen.w, dimen.x + dimen.w)
+            bottom = math.max(bottom or dimen.y + dimen.h, dimen.y + dimen.h)
+        end
+    end
+    if left then
+        return Geom:new{
+            x = left,
+            y = top,
+            w = right - left,
+            h = bottom - top,
+        }
+    end
+end
+
+function MetadataTabsTitleBar:setWidgetsDirty(widgets)
+    local dimen = widgetBounds(widgets)
+    if dimen then
+        UIManager:setDirty(self.show_parent, "ui", dimen)
+    end
+end
 
 function MetadataTabsTitleBar:init()
     self.show_parent = self.show_parent or self
@@ -639,7 +669,12 @@ function MetadataTabsTitleBar:updateBackTitle(refresh)
     self.back_button:setText(title or "", self.back_button.width)
 
     if refresh ~= false then
-        UIManager:setDirty(self.show_parent, "ui", self.dimen)
+        UIManager:setDirty(self.show_parent, "ui", Geom:new{
+            x = self.dimen.x,
+            y = self.dimen.y,
+            w = self.back_title_width,
+            h = self.dimen.h,
+        })
     end
 end
 
@@ -660,34 +695,40 @@ function MetadataTabsTitleBar:updateStatusIndicators(refresh)
     local battery_text = getBatteryText()
     local wifi_text = getWifiText()
     local frontlight_text = getFrontlightText()
-    if self.battery_text == battery_text
-            and self.wifi_text == wifi_text
-            and self.frontlight_text == frontlight_text then
-        return
+    local changed_buttons = {}
+    if self.battery_text ~= battery_text then
+        self.battery_text = battery_text
+        self.battery_button:setText(battery_text, self.battery_width)
+        table.insert(changed_buttons, self.battery_button)
     end
-
-    self.battery_text = battery_text
-    self.wifi_text = wifi_text
-    self.frontlight_text = frontlight_text
-    self.battery_button:setText(battery_text, self.battery_width)
-    self.wifi_button:setText(wifi_text, self.wifi_width)
-    self.frontlight_button:setText(frontlight_text, self.frontlight_width)
-    if refresh ~= false then
-        UIManager:setDirty(self.show_parent, "ui", self.dimen)
+    if self.wifi_text ~= wifi_text then
+        self.wifi_text = wifi_text
+        self.wifi_button:setText(wifi_text, self.wifi_width)
+        table.insert(changed_buttons, self.wifi_button)
     end
+    if self.frontlight_text ~= frontlight_text then
+        self.frontlight_text = frontlight_text
+        self.frontlight_button:setText(frontlight_text, self.frontlight_width)
+        table.insert(changed_buttons, self.frontlight_button)
+    end
+    if refresh ~= false and #changed_buttons > 0 then
+        self:setWidgetsDirty(changed_buttons)
+    end
+    return changed_buttons
 end
 
 function MetadataTabsTitleBar:refreshStatusIndicators()
-    self:updateStatusIndicators(false)
-    UIManager:setDirty(self.show_parent, "ui", self.dimen)
+    self:updateStatusIndicators()
 end
 
 function MetadataTabsTitleBar:setTabSelected(tab, selected)
     if tab.button.text_font_bold ~= selected then
         tab.button.text_font_bold = selected
+        tab.button.label_widget.bold = selected
         tab.button.label_widget:free()
-        tab.button:init()
+        return true
     end
+    return false
 end
 
 function MetadataTabsTitleBar:updateSelectedTab(refresh)
@@ -698,12 +739,15 @@ function MetadataTabsTitleBar:updateSelectedTab(refresh)
     end
 
     self.selected_tab_key = selected_tab_key
+    local changed_buttons = {}
     for _, tab in ipairs({ self.books_tab, self.series_tab, self.authors_tab }) do
-        self:setTabSelected(tab, tab.key == selected_tab_key)
+        if self:setTabSelected(tab, tab.key == selected_tab_key) then
+            table.insert(changed_buttons, tab.button)
+        end
     end
 
     if refresh ~= false then
-        UIManager:setDirty(self.show_parent, "ui", self.dimen)
+        self:setWidgetsDirty(changed_buttons)
     end
 end
 

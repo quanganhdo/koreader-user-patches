@@ -1,5 +1,5 @@
 -- Author/Series browser userpatch
--- Version: 1.0.4
+-- Version: 1.1.0
 -- Updates: https://github.com/quanganhdo/koreader-user-patches
 -- 
 -- Adapted from medinauta's user patch:
@@ -10,6 +10,7 @@
 -- https://github.com/poire-z/koreader/commit/ad03650b5d7e19a8de45857c83a2d7a4c7e13a4a
 -- 
 -- Changelog:
+-- * 1.1.0: synchronized patch-set version
 -- * 1.0.4: refresh virtual folders after deletes, trim unused virtual-folder code, and keep the patch focused on author/series browsing
 -- * 1.0.3: renamed from BrowseByMetadata, added representative covers and custom virtual-folder styling, and limited browsing to author/series
 

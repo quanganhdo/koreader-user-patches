@@ -5,9 +5,10 @@ Controls: Any key to dismiss; Prev/Next to navigate years; Center D-pad to toggl
 Tap left yearly value to switch days/hours
 Tap right yearly value or monthly bars to open book list
 Tap monthly header to switch days/hours
-Version: 1.0.5
+Version: 1.1.0
 Updates: https://github.com/quanganhdo/koreader-user-patches
 Changelog:
+* 1.1.0: localized popup close repaint and synchronized patch-set version
 * 1.0.5: invalidate cached insights after reading statistics sync changes
 * 1.0.4: version bump
 * 1.0.3: added cached insights aggregates and modal book lists
@@ -1552,7 +1553,9 @@ function ReadingInsightsPopup:onTapClose()
 end
 
 function ReadingInsightsPopup:onCloseWidget()
-    UIManager:setDirty(nil, "ui")
+    UIManager:setDirty(nil, function()
+        return "ui", self.popup_frame.dimen
+    end)
 end
 
 -- Hook into ReaderUI to handle the event

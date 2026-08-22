@@ -1,7 +1,8 @@
 -- File browser finished-book badge
--- Version: 1.0.0
+-- Version: 1.1.0
 -- Updates: https://github.com/quanganhdo/koreader-user-patches
 -- Changelog:
+-- * 1.1.0: synchronized patch-set version
 -- * 1.0.0: replace coverbrowser's opened dogear with a finished-book checkmark badge
 local userpatch = require("userpatch")
 

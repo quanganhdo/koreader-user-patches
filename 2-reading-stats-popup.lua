@@ -2,9 +2,10 @@
 Reading Stats Popup - Kobo-style reading statistics overlay
 Shows: This Chapter (time left), Next Chapter (time), This Book (progress, pages read, time spent/left),
        Pace (avg time/day, pages/minute), Days (reading/to go)
-Version: 1.0.4
+Version: 1.1.0
 Updates: https://github.com/quanganhdo/koreader-user-patches
 Changelog:
+* 1.1.0: added anchored-popup API and one-tap toolbar switching for compatible reader overlays
 * 1.0.4: version bump
 * 1.0.2: added keyboard navigation support
 * 1.0.1: added l10n support and aligned calculations with stock behavior
@@ -38,6 +39,9 @@ local VerticalSpan = require("ui/widget/verticalspan")
 local Screen = Device.screen
 local gettext = require("gettext")
 local ReaderUI = require("apps/reader/readerui")
+
+local PATCH_VERSION = "1.1.0"
+local POPUP_API_VERSION = 3
 
 -- User patch localization: add your language overrides here.
 local PATCH_L10N = {
@@ -375,7 +379,7 @@ local function buildSectionHeader(font_section, text, width, left_padding)
     left_padding = left_padding or Size.padding.large
     local text_widget = TextWidget:new{ text = text, face = font_section }
     return FrameContainer:new{
-        background = Blitbuffer.COLOR_GRAY_E,
+        background = Blitbuffer.COLOR_GRAY_D,
         bordersize = 0,
         padding_top = Size.padding.small,
         padding_bottom = Size.padding.small,
@@ -561,6 +565,7 @@ local ReadingStatsPopup = InputContainer:extend{
 function ReadingStatsPopup:init()
     local screen_w = Screen:getWidth()
     local screen_h = Screen:getHeight()
+    self.top_offset = math.max(0, math.floor(tonumber(self.top_offset) or 0))
     local stats = self:gatherStats()
     local fonts = buildSerifFonts()
     local layout = buildLayout(screen_w, Size.padding.large, Screen:scaleBySize(20))
@@ -576,9 +581,12 @@ function ReadingStatsPopup:init()
         sections,
     }
 
-    self[1] = VerticalGroup:new{
-        self.popup_frame,
-    }
+    local popup_children = {}
+    if self.top_offset > 0 then
+        table.insert(popup_children, VerticalSpan:new{ width = self.top_offset })
+    end
+    table.insert(popup_children, self.popup_frame)
+    self[1] = VerticalGroup:new(popup_children)
 
     self.time_cell_targets = tap_targets
     self.dimen = Geom:new{ w = screen_w, h = screen_h }
@@ -741,8 +749,14 @@ function ReadingStatsPopup:toggleTimeFormat()
     local current = getTimeFormatSetting()
     local next_format = current == TIME_FORMAT_XHYM and TIME_FORMAT_NICKEL or TIME_FORMAT_XHYM
     setTimeFormatSetting(next_format)
+    self.suppress_close_callback = true
     UIManager:close(self)
-    UIManager:show(ReadingStatsPopup:new{ ui = self.ui })
+    UIManager:show(ReadingStatsPopup:new{
+        close_callback = self.close_callback,
+        ui = self.ui,
+        top_offset = self.top_offset,
+        toolbar_tap_callback = self.toolbar_tap_callback,
+    })
     return true
 end
 
@@ -754,7 +768,17 @@ function ReadingStatsPopup:onTapClose(arg, ges_ev)
             end
         end
     end
+    local toolbar_pos
+    if ges_ev and ges_ev.pos and ges_ev.pos.y < self.top_offset
+            and self.toolbar_tap_callback then
+        toolbar_pos = ges_ev.pos
+    end
     UIManager:close(self)
+    if toolbar_pos then
+        UIManager:nextTick(function()
+            self.toolbar_tap_callback(toolbar_pos)
+        end)
+    end
     return true
 end
 
@@ -764,12 +788,22 @@ function ReadingStatsPopup:onAnyKeyPressed()
 end
 
 function ReadingStatsPopup:onCloseWidget()
+    if self.close_callback and not self.suppress_close_callback then
+        self.close_callback()
+    end
     UIManager:setDirty(nil, "ui")
 end
 
-function ReaderUI.onShowReadingStatsPopup(this)
+ReaderUI.reading_stats_popup_patch_version = PATCH_VERSION
+ReaderUI.reading_stats_popup_api_version = POPUP_API_VERSION
+
+function ReaderUI.onShowReadingStatsPopup(this, options)
+    options = type(options) == "table" and options or {}
     local popup = ReadingStatsPopup:new{
+        close_callback = options.close_callback,
         ui = this,
+        top_offset = options.top_offset,
+        toolbar_tap_callback = options.toolbar_tap_callback,
     }
     UIManager:show(popup)
     return true

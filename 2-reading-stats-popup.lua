@@ -41,7 +41,7 @@ local gettext = require("gettext")
 local ReaderUI = require("apps/reader/readerui")
 
 local PATCH_VERSION = "1.1.0"
-local POPUP_API_VERSION = 3
+local POPUP_API_VERSION = 2
 
 -- User patch localization: add your language overrides here.
 local PATCH_L10N = {

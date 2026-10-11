@@ -2,7 +2,7 @@
 
 Some of my personal user patches to add extra bells and whistles to your KOReader experience.
 
-Current version: `1.0.4`
+Current version: `1.1.0`
 
 ## Installation
 
@@ -32,6 +32,14 @@ Screenshot:
 Adds gesture-driven virtual folders for browsing the library by `Author` and `Series`, with representative covers for each leaf folder.
 Assign gestures via `Gesture Manager` to trigger `File browser > Browse by author` and `File browser > Browse by series`.
 
+### `2-filemanager-metadata-tabs.lua`
+
+Adds Books, Series, and Authors tabs to the file browser. Install it with `2-author-series.lua` for author and series browsing.
+
+### `2-finished-badge.lua`
+
+Replaces the opened-book dog-ear with a checkmark on finished books in mosaic mode. Finished-book badges now live in this separate patch; install it alongside `2-reading-percentage.lua` to keep both badges.
+
 ### `2-reading-percentage.lua`
 
 Replaces the file browser dog-ear with a top-right reading percentage badge for in-progress books in mosaic mode.
@@ -50,7 +58,7 @@ Screenshot:
 ### `2-reading-stats-popup.lua`
 
 Kobo-style reading stats overlay: chapter time left, next chapter time, book progress, and reading pace.
-Assign a gesture via `Gesture Manager` to trigger `Reader > Reading statistics: overview`.
+Assign a gesture via `Gesture Manager` to trigger `Reader > Reading statistics: book overview`.
 
 Screenshot:
 <br>
